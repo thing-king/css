@@ -1,5 +1,5 @@
 # css
-CSS parser and validator.
+CSS parser with value validation.
 
 
 ## Features
