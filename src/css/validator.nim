@@ -16,7 +16,7 @@ const modifiedSyntaxes = block:
   temp
 
 
-const DEBUG = true
+const DEBUG = false
 
 proc logMsg(msg: string) =
   if DEBUG:
