@@ -13,7 +13,7 @@ CSS parser and validator.
 import pkg/css
 
 # Validate property names
-echo isValidPropertyName("not valid!").valid                      # true
+echo isValidPropertyName("not valid!").valid                      # false
 
 # Validate property values against a name
 echo isValidPropertyValue("background-color", "magenta").valid    # true
