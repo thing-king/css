@@ -25,7 +25,60 @@
 #   const atRules* = atRulesData.fromJson(AtRule)
 #   const properties* = propertiesData.fromJson(Properties)
 
+import macros
+import tables
+
 import cache/css_imports_schema_cache
 import cache/css_imports_cache
 export css_imports_schema_cache
-export css_imports_cache
+# export css_imports_cache
+
+const AVAILABLE = [
+  "atRules",
+  "types",
+  "units",
+  "syntaxes",
+  "selectors",
+  "functions",
+  "properties"
+]
+
+macro importCSSAndModify*(kind: untyped, blck: untyped): untyped =
+  expectKind(kind, nnkIdent)
+  expectKind(blck, nnkStmtList)
+  if kind.strVal notin AVAILABLE:
+    error "Kind not found: " & kind.strVal
+  
+  result = quote do:
+    block:
+      var `kind` = css_imports_cache.`kind`
+      `blck`
+      `kind`
+
+macro importCSS*(kind: untyped): untyped =
+  expectKind(kind, nnkIdent)
+  if kind.strVal notin AVAILABLE:
+    error "Kind not found: " & kind.strVal
+  
+  result = quote do:
+    css_imports_cache.`kind`
+
+const properties* = importCSSAndModify properties:
+  properties["-webkit-text-size-adjust"] = PropertiesValue(syntax: "<percentage> | auto | none")
+  properties["-webkit-text-decoration"] = PropertiesValue(syntax: "<'text-decoration-line'> || <'text-decoration-style'> || <'text-decoration-color'> || <'text-decoration-thickness'>")
+  properties["-webkit-text-decoration-skip-ink"] = PropertiesValue(syntax: "auto | all | none")
+  properties["-webkit-margin-end"] = PropertiesValue(syntax: "<length-percentage> | auto")
+  properties["-webkit-margin-before"] = PropertiesValue(syntax: "<length-percentage> | auto")
+  properties["-webkit-transition"] = PropertiesValue(syntax: "<single-transition>#")
+  properties["-webkit-print-color-adjust"] = PropertiesValue(syntax: "economy | exact")
+  properties["color-adjust"] = PropertiesValue(syntax: "economy | exact")
+
+const syntaxes* = importCSSAndModify syntaxes:
+  syntaxes["url"] = SyntaxesValue(syntax: "url( <string> )")
+  syntaxes["length-percentage"] = SyntaxesValue(syntax: "<length> | <percentage>")
+const functions* = importCSSAndModify functions:
+  functions["url()"] = FunctionsValue(syntax: "url( <string> )")
+const atRules* = importCSS atRules
+const types* = importCSS types
+const units* = importCSS units
+const selectors* = importCSS selectors

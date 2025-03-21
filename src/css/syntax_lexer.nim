@@ -54,6 +54,9 @@ proc parseDataType(input: string, pos: var int): string =
     result.add('\'')
     pos += 1
   
+  # Store the starting position to detect premature ending
+  var contentStartPos = pos
+  
   while pos < input.len and input[pos] != '>':
     # If we have a quote, look for closing quote
     if hasQuote and input[pos] == '\'':
@@ -61,12 +64,33 @@ proc parseDataType(input: string, pos: var int): string =
       pos += 1
       # Continue to grab characters until we reach >
       while pos < input.len and input[pos] != '>':
+        # Skip any value range that might appear after the property
+        if input[pos] == '[':
+          # We're inside a data type but encountered a value range marker
+          # We need to roll back position to process it separately
+          # Don't add it to the result
+          break
         result.add(input[pos])
         pos += 1
       break
     
+    # Check for value range start inside data type - we should stop
+    if input[pos] == '[':
+      # We're inside a data type but encountered a value range marker
+      # We need to roll back position to process it separately outside
+      break
+    
     result.add(input[pos])
     pos += 1
+  
+  # If we found a value range marker '[' inside the data type, we need to stop
+  # without consuming it, so it can be processed separately
+  if pos < input.len and input[pos] == '[':
+    # Make sure we captured at least some content
+    if pos > contentStartPos:
+      # Success, but don't advance position past '['
+      # We'll leave the '[' to be processed as a value range later
+      return
   
   if pos < input.len and input[pos] == '>':
     pos += 1 # Skip closing >
@@ -164,11 +188,27 @@ proc parseValueRange(input: string, pos: var int): Option[ValueRangeType] =
   # Parse max value (could be infinity symbol ∞ or other value)
   var maxValue = ""
   while pos < input.len and input[pos] notin {']', ' ', '\t', '\n', '\r'}:
-    # Handle UTF-8 characters properly
-    var rune: Rune
-    fastRuneAt(input, pos, rune, true)
-    maxValue.add($rune)
-    pos += runeLenAt(input, pos)
+    # Safely handle UTF-8 characters
+    if pos < input.len:  # Ensure we're still within bounds
+      var runeLen = 1
+      # Only use unicode functions for potential multi-byte characters
+      if ord(input[pos]) >= 128:
+        try:
+          runeLen = runeLenAt(input, pos)
+        except IndexDefect:
+          # If we get an index error, just treat as a single byte
+          runeLen = 1
+      
+      # Safely extract the character(s)
+      if pos + runeLen <= input.len:
+        maxValue.add(input[pos..<pos+runeLen])
+        pos += runeLen
+      else:
+        # If adding runeLen would exceed string length, just add the current char
+        maxValue.add(input[pos])
+        pos += 1
+    else:
+      break  # Safety check - shouldn't reach here due to the while condition
   
   # Skip whitespace after max value
   skipWhitespace(input, pos)
@@ -182,34 +222,48 @@ proc parseValueRange(input: string, pos: var int): Option[ValueRangeType] =
     pos = startPos # Reset position
     return none(ValueRangeType)
 
-proc checkModifiers(input: string, pos: var int): seq[TokenKind] =
-  # Check for modifiers after a token or group
-  result = @[]
+proc checkModifiersWithQuantity(input: string, pos: var int): tuple[modifiers: seq[TokenKind], quantity: Option[QuantityType]] =
+  # Check for modifiers after a token or group, and also check for quantity specifiers that follow modifiers
+  result.modifiers = @[]
+  result.quantity = none(QuantityType)
   var currentPos = pos
   
   while currentPos < input.len:
     case input[currentPos]:
       of '?':
-        result.add(tkSingleOptional)
+        result.modifiers.add(tkSingleOptional)
         currentPos += 1
       of '!':
-        result.add(tkRequired)
+        result.modifiers.add(tkRequired)
         currentPos += 1
       of '#':
-        result.add(tkCommaList)
+        result.modifiers.add(tkCommaList)
         currentPos += 1
+        # After encountering a comma list modifier #, check for a quantity specifier
+        skipWhitespace(input, currentPos)
+        if currentPos < input.len and input[currentPos] == '{':
+          result.quantity = parseQuantity(input, currentPos)
       of '+':
-        result.add(tkSpaceList)
+        result.modifiers.add(tkSpaceList)
         currentPos += 1
+        # Similar handling for space list modifier
+        skipWhitespace(input, currentPos)
+        if currentPos < input.len and input[currentPos] == '{':
+          result.quantity = parseQuantity(input, currentPos)
       of '*':
-        result.add(tkZeroOrMore)
+        result.modifiers.add(tkZeroOrMore)
         currentPos += 1
       else:
         break
   
-  # Update position only if we found modifiers
-  if result.len > 0:
+  # Update position only if we found modifiers or quantity
+  if result.modifiers.len > 0 or result.quantity.isSome:
     pos = currentPos
+
+# Then we need to change the original checkModifiers function to use this new one internally
+proc checkModifiers(input: string, pos: var int): seq[TokenKind] =
+  let result = checkModifiersWithQuantity(input, pos)
+  return result.modifiers
 
 proc tokenizeSyntax*(input: string): seq[Token] =
   var pos = 0
@@ -231,19 +285,22 @@ proc tokenizeSyntax*(input: string): seq[Token] =
 
       # Data Type
       if input[pos] == '<':
-        let dataType = parseDataType(input, pos)
+        let dataType = strutils.strip(parseDataType(input, pos))
         if dataType != "":
           # Check for value range
           skipWhitespace(input, pos)
           let valueRangeOpt = parseValueRange(input, pos)
 
-          # Check for quantity
+          # Check for modifiers and quantity
           skipWhitespace(input, pos)
-          let quantityOpt = if pos < input.len and input[pos] == '{':
+          let modResult = checkModifiersWithQuantity(input, pos)
+
+          # Then check for quantity if not already found after a modifier
+          let quantityOpt = if modResult.quantity.isNone and pos < input.len and input[pos] == '{':
             parseQuantity(input, pos)
           else:
-            none(QuantityType)
-          
+            modResult.quantity
+
           # Create appropriate token based on specials
           if valueRangeOpt.isSome or quantityOpt.isSome:
             var token = Token(
@@ -251,7 +308,8 @@ proc tokenizeSyntax*(input: string): seq[Token] =
               value: dataType, 
               isSpecial: true,
               valueRange: if valueRangeOpt.isSome: valueRangeOpt.get() else: ValueRangeType(),
-              quantity: if quantityOpt.isSome: quantityOpt.get() else: QuantityType()
+              quantity: if quantityOpt.isSome: quantityOpt.get() else: QuantityType(),
+              modifiers: modResult.modifiers  # Add modifiers even for special tokens
             )
             tokens.add(token)
           else:
@@ -259,7 +317,7 @@ proc tokenizeSyntax*(input: string): seq[Token] =
               kind: tkDataType, 
               value: dataType, 
               isSpecial: false,
-              modifiers: checkModifiers(input, pos)
+              modifiers: modResult.modifiers
             )
             tokens.add(token)
       
@@ -270,16 +328,15 @@ proc tokenizeSyntax*(input: string): seq[Token] =
         if pos < input.len and input[pos] == ']':
           pos += 1 # Skip ]
           
-          # Check for modifiers, including ?
-          let modifiers = checkModifiers(input, pos)
-          let isOptional = tkSingleOptional in modifiers
+          # Check for modifiers and quantity
+          let modResult = checkModifiersWithQuantity(input, pos)
+          let isOptional = tkSingleOptional in modResult.modifiers
           
-          # Check for quantity
-          skipWhitespace(input, pos)
-          let quantityOpt = if pos < input.len and input[pos] == '{':
+          # Then check for quantity if not already found after a modifier
+          let quantityOpt = if modResult.quantity.isNone and pos < input.len and input[pos] == '{':
             parseQuantity(input, pos)
           else:
-            none(QuantityType)
+            modResult.quantity
           
           # Create appropriate token based on whether it's optional and has quantity
           if quantityOpt.isSome:
@@ -288,7 +345,8 @@ proc tokenizeSyntax*(input: string): seq[Token] =
               children: innerTokens, 
               isSpecial: true,
               quantity: quantityOpt.get(),
-              valueRange: ValueRangeType() # Empty as groups don't have value ranges
+              valueRange: ValueRangeType(), # Empty as groups don't have value ranges
+              modifiers: modResult.modifiers  # Add modifiers even for special tokens
             )
             tokens.add(token)
           else:
@@ -296,7 +354,7 @@ proc tokenizeSyntax*(input: string): seq[Token] =
               kind: if isOptional: tkOptional else: tkGroup, 
               children: innerTokens, 
               isSpecial: false,
-              modifiers: modifiers
+              modifiers: modResult.modifiers
             )
             tokens.add(token)
       
@@ -313,12 +371,15 @@ proc tokenizeSyntax*(input: string): seq[Token] =
         
         if pos < input.len and input[pos] == ')':
           pos += 1 # Skip )
-          # Check for quantity
-          skipWhitespace(input, pos)
-          let quantityOpt = if pos < input.len and input[pos] == '{':
+          
+          # Check for modifiers and quantity
+          let modResult = checkModifiersWithQuantity(input, pos)
+          
+          # Then check for quantity if not already found after a modifier
+          let quantityOpt = if modResult.quantity.isNone and pos < input.len and input[pos] == '{':
             parseQuantity(input, pos)
           else:
-            none(QuantityType)
+            modResult.quantity
           
           # Create appropriate token based on quantity
           if quantityOpt.isSome:
@@ -327,7 +388,8 @@ proc tokenizeSyntax*(input: string): seq[Token] =
               children: innerTokens, 
               isSpecial: true,
               quantity: quantityOpt.get(),
-              valueRange: ValueRangeType() # Empty, as groups don't have value ranges
+              valueRange: ValueRangeType(), # Empty, as groups don't have value ranges
+              modifiers: modResult.modifiers  # Add modifiers even for special tokens
             )
             tokens.add(token)
           else:
@@ -335,7 +397,7 @@ proc tokenizeSyntax*(input: string): seq[Token] =
               kind: tkParenGroup, 
               children: innerTokens, 
               isSpecial: false,
-              modifiers: checkModifiers(input, pos)
+              modifiers: modResult.modifiers
             )
             tokens.add(token)
       
@@ -368,12 +430,15 @@ proc tokenizeSyntax*(input: string): seq[Token] =
       else:
         let keyword = parseKeyword(input, pos)
         if keyword != "":
-          # Check for quantity
+          # Check for modifiers and quantity
           skipWhitespace(input, pos)
-          let quantityOpt = if pos < input.len and input[pos] == '{':
+          let modResult = checkModifiersWithQuantity(input, pos)
+          
+          # Then check for quantity if not already found after a modifier
+          let quantityOpt = if modResult.quantity.isNone and pos < input.len and input[pos] == '{':
             parseQuantity(input, pos)
           else:
-            none(QuantityType)
+            modResult.quantity
           
           # Create appropriate token based on quantity
           if quantityOpt.isSome:
@@ -382,7 +447,8 @@ proc tokenizeSyntax*(input: string): seq[Token] =
               value: keyword, 
               isSpecial: true,
               quantity: quantityOpt.get(),
-              valueRange: ValueRangeType() # Empty, as keywords don't have value ranges
+              valueRange: ValueRangeType(), # Empty, as keywords don't have value ranges
+              modifiers: modResult.modifiers  # Add modifiers even for special tokens
             )
             tokens.add(token)
           else:
@@ -390,7 +456,7 @@ proc tokenizeSyntax*(input: string): seq[Token] =
               kind: tkKeyword, 
               value: keyword, 
               isSpecial: false,
-              modifiers: checkModifiers(input, pos)
+              modifiers: modResult.modifiers
             )
             tokens.add(token)
         else:
@@ -490,31 +556,10 @@ proc `$`(token: Token): string =
   else:
     result = base
 
-proc printTokens*(tokens: seq[Token], indent = 0) =
-  for token in tokens:
-    echo ' '.repeat(indent), $token
-    if token.kind in {tkOptional, tkGroup, tkParenGroup} and token.children.len > 0:
-      printTokens(token.children, indent + 2)
-
-proc printTokensDetailed*(tokens: seq[Token], indent = 0) =
-  for i, token in tokens:
-    var info = $token
-    if token.modifiers.len > 0:
-      var mods = "Modifiers: "
-      for modd in token.modifiers:
-        mods.add($modd & " ")
-      info.add(" [" & mods & "]")
-    
-    echo ' '.repeat(indent), i, ": ", info
-    
-    if token.kind in {tkOptional, tkGroup, tkParenGroup} and token.children.len > 0:
-      printTokensDetailed(token.children, indent + 2)
-
 when isMainModule:
   # Test the enhanced CSS syntax parser
   block:
-    let syntax1 = "hwb( [<hue> | none] [<percentage> | none] [<percentage> | none] [ / [<alpha-value> | none] ]?)"
+    let syntax1 = "[ [ left | center | right | top | bottom | <length-percentage> ] | [ left | center | right | <length-percentage> ] [ top | center | bottom | <length-percentage> ] | [ center | [ left | right ] <length-percentage>? ] && [ center | [ top | bottom ] <length-percentage>? ] ]"
     let tokens1 = tokenizeSyntax(syntax1)
     echo "Parsed syntax: ", syntax1
-    printTokens(tokens1)
-    echo ""
+    echo tokens1

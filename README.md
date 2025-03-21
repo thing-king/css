@@ -5,9 +5,10 @@ CSS parser with value validation.
 ## Features
 - [X] MDN CSS data imported via JSON schema, created with `jsony_plus`
 - [X] Property Name/Value Validation
-- [ ] Userfriendly validation errors
+- [ ] `calc()` support
+- [ ] Userfriendly errors
 - [ ] Selectors
-- [ ] Stylesheet
+- [ ] Dynamic Compilation/Contexts
 
 ```nim
 import pkg/css

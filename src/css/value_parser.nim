@@ -14,6 +14,7 @@ type
     vtkSlash,       
     vtkLParen,      
     vtkRParen,      
+    vtkImportant,   # New token type for !important
     vtkSequence     
 
   ValueToken* = object
@@ -34,7 +35,7 @@ proc wrapSequence*(tokens: seq[ValueToken], isRoot: bool = false): ValueToken =
     return ValueToken(kind: vtkSequence, value: "", children: tokens)
 
 
-proc tokenizeValue*(input: string, wrapRoot: bool = true): seq[ValueToken] =
+proc tokenizeValue*(input: string, wrapRoot: bool = true): seq[ValueToken] {.gcsafe.} =
   var tokens: seq[ValueToken] = @[]
   var i = 0
 
@@ -55,20 +56,32 @@ proc tokenizeValue*(input: string, wrapRoot: bool = true): seq[ValueToken] =
 
   proc parseNumber(): ValueToken =
     var numStr = ""
+    # Handle negative numbers - check for minus sign
+    if i < input.len and input[i] == '-':
+      numStr.add(input[i])
+      inc i
+    
+    # Parse digits before decimal point
     while i < input.len and input[i] in {'0'..'9'}:
       numStr.add(input[i])
       inc i
+    
+    # Parse decimal point and digits after it
     if i < input.len and input[i] == '.':
       numStr.add(input[i])
       inc i
       while i < input.len and input[i] in {'0'..'9'}:
         numStr.add(input[i])
         inc i
+    
+    # Check for unit
     var unit = ""
     if i < input.len and (input[i] in {'a'..'z', 'A'..'Z', '%'}):
       while i < input.len and (input[i] in {'a'..'z', 'A'..'Z', '-', '%'}):
         unit.add(input[i])
         inc i
+    
+    # Return appropriate token based on unit
     if unit == "%":
       return ValueToken(kind: vtkPercentage, value: numStr & unit,
                         hasNumValue: true, numValue: parseFloat(numStr))
@@ -79,6 +92,31 @@ proc tokenizeValue*(input: string, wrapRoot: bool = true): seq[ValueToken] =
       return ValueToken(kind: vtkNumber, value: numStr,
                         hasNumValue: true, numValue: parseFloat(numStr))
 
+  # New function to parse !important
+  proc parseImportant(): ValueToken =
+    # Store the current position
+    let startPos = i
+    # Skip the '!'
+    inc i
+    # Check if this is specifically "!important"
+    let remainder = "important"
+    var matched = true
+    
+    for j in 0..<remainder.len:
+      if i + j >= input.len or input[i + j] != remainder[j]:
+        matched = false
+        break
+    
+    if matched:
+      # This is exactly "!important", so consume it
+      i += remainder.len
+      return ValueToken(kind: vtkImportant, value: "!important")
+    else:
+      # This is not "!important", so reset position
+      i = startPos
+      # Just return the '!' as an identifier
+      inc i
+      return ValueToken(kind: vtkIdent, value: "!")
 
   proc parseFunctionArgs(input: string, start: int): (seq[ValueToken], int) =
     var args: seq[ValueToken] = @[]
@@ -132,30 +170,36 @@ proc tokenizeValue*(input: string, wrapRoot: bool = true): seq[ValueToken] =
   while i < input.len:
     skipWhitespace()
     if i >= input.len: break
-    case input[i]
-    of '"', '\'':
-      tokens.add(parseString())
-    of '0'..'9', '.':
+    
+    # Main change: Check for negative numbers before identifiers
+    # A negative number is a minus sign followed by a digit or decimal point
+    if input[i] == '-' and i + 1 < input.len and (input[i + 1] in {'0'..'9', '.'}):
       tokens.add(parseNumber())
-    of 'a'..'z', 'A'..'Z', '-', '_':
+    elif input[i] in {'0'..'9', '.'}:
+      tokens.add(parseNumber())
+    elif input[i] in {'"', '\''}:
+      tokens.add(parseString())
+    elif input[i] == '!':
+      tokens.add(parseImportant())
+    elif input[i] in {'a'..'z', 'A'..'Z', '-', '_'}:
       tokens.add(parseIdent())
-    of '#':
+    elif input[i] == '#':
       var color = "#"
       inc i
       while i < input.len and input[i] in {'0'..'9', 'a'..'f', 'A'..'F'}:
         color.add(input[i])
         inc i
       tokens.add(ValueToken(kind: vtkColor, value: color))
-    of ',':
+    elif input[i] == ',':
       tokens.add(ValueToken(kind: vtkComma, value: ","))
       inc i
-    of '/':
+    elif input[i] == '/':
       tokens.add(ValueToken(kind: vtkSlash, value: "/"))
       inc i
-    of '(':
+    elif input[i] == '(':
       tokens.add(ValueToken(kind: vtkLParen, value: "("))
       inc i
-    of ')':
+    elif input[i] == ')':
       tokens.add(ValueToken(kind: vtkRParen, value: ")"))
       inc i
     else:
@@ -203,6 +247,9 @@ proc `$`*(vt: ValueToken): string =
     return "[(]"
   of vtkRParen:
     return "[)]"
+  of vtkImportant:
+    return "[!important]"
+    
 proc `$`*(vts: seq[ValueToken]): string =
   return vts.map(`$`).join(", ")
 
@@ -239,6 +286,8 @@ proc treeRepr*(vt: ValueToken, indent: string = ""): string =
     return indent & "LParen"
   of vtkRParen:
     return indent & "RParen"
+  of vtkImportant:
+    return indent & "Important"
 
 proc treeRepr*(vts: seq[ValueToken]): string =
   var lines = newSeq[string]()
@@ -247,11 +296,5 @@ proc treeRepr*(vts: seq[ValueToken]): string =
   return lines.join(",\n")
 
 when isMainModule:
-  let valueStr = "url(\"hello world\") 2"
-  let tokens = tokenizeValue(valueStr)
-  echo "Value tokens for: ", valueStr
-  echo $tokens
-  echo "\nTree representation:"
-  echo treeRepr(tokens)
-  echo tokens[0].children.len
-  echo tokens[0].children[1].value
+  let tokens = tokenizeValue("-0.5em")
+  echo tokens.treeRepr

@@ -6,10 +6,8 @@ import strutils
 import ./css/imports
 import ./css/validator
 
-type
-  ValidResult* = object
-    isValid*: bool
-    issues*: seq[string]
+export ValidatorResult
+
 
 proc singleIssue(valid: bool, error: string): ValidatorResult =
   var errors: seq[string] = @[]
@@ -20,22 +18,32 @@ proc singleIssue(valid: bool, error: string): ValidatorResult =
 
 
 
-proc isValidUnitValue*(value: string): ValidatorResult =
+proc isValidUnitValue*(value: string): ValidatorResult {.gcsafe.} =
   let unit = value.strip(chars = {'0'..'9', '.', '+', '-'})
   return singleIssue(
     unit in imports.units,
     "Invalid unit: " & value
   )
 
-proc isValidPropertyName*(name: string): ValidatorResult =
+proc isValidPropertyName*(name: string): ValidatorResult {.gcsafe.} =
   return singleIssue(
     name in imports.properties,
     "Invalid property name: " & name
   )
 
+proc getProperty*(name: string): PropertiesValue {.gcsafe.} =
+  return imports.properties[name]
+
 proc isValidPropertyValue*(property: PropertiesValue, value: string): ValidatorResult =
   let syntax = property.syntax
-  return validateCSSValue(syntax, value)
+
+  var vv = value
+  if vv.endsWith(";"):
+    vv = vv[0..^2]
+  if vv in ["initial", "unset", "revert", "inherit"]:
+    return ValidatorResult(valid: true)
+
+  return validateCSSValue(syntax, vv)
 
 proc isValidPropertyValue*(name: string, value: string): ValidatorResult =
   let validName = isValidPropertyName(name)
@@ -46,4 +54,4 @@ proc isValidPropertyValue*(name: string, value: string): ValidatorResult =
   return isValidPropertyValue(property, value)
 
 
-echo isValidPropertyValue("color", "oranges")
+# echo isValidPropertyValue("color", "inherit;")

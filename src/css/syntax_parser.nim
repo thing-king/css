@@ -9,6 +9,7 @@ type
     nkDataType,     # <...> data type
     nkKeyword,      # Literal keywords
     nkChoice,       # A | B | C alternatives (only one)
+    nkAndList,      # A && B && C alternatives (all must be present in any order)
     nkOrList,       # A || B || C alternatives (any number in any order)
     nkSequence,     # A B C sequence of nodes
     nkOptional,     # [...]? optional node
@@ -81,11 +82,11 @@ proc newQuantifiedValueRangedNode(kind: NodeKind, value: string, min: int, max: 
   )
 
 # Forward declarations
-proc processTokensToNodes(tokens: seq[Token], isTopLevel: bool = true, inFunction: bool = false): seq[Node]
-proc processToken(token: Token): Node
+proc processTokensToNodes(tokens: seq[Token], isTopLevel: bool = true, inFunction: bool = false): seq[Node] {.gcsafe.}
+proc processToken(token: Token): Node {.gcsafe.}
 
 # Process function parameters based on whether they're comma-separated or space-separated
-proc processFunctionParams(tokens: seq[Token]): seq[Node] =
+proc processFunctionParams(tokens: seq[Token]): seq[Node] {.gcsafe.} =
   # Check if this is a comma-separated function or space-separated function
   var hasCommas = false
   for token in tokens:
@@ -134,7 +135,7 @@ proc processFunctionParams(tokens: seq[Token]): seq[Node] =
     seqNode.children = nodes
     return @[seqNode]  # Return as a single parameter
 
-proc processToken(token: Token): Node =
+proc processToken(token: Token): Node {.gcsafe.} =
   case token.kind:
     of tkDataType:
       var dataNode: Node
@@ -476,171 +477,166 @@ proc processToken(token: Token): Node =
       # Default fallback for other token types
       result = newNode(nkSequence)
 
-proc processTokensToNodes(tokens: seq[Token], isTopLevel: bool = true, inFunction: bool = false): seq[Node] =
+proc processTokensToNodes(tokens: seq[Token], isTopLevel: bool = true, inFunction: bool = false): seq[Node] {.gcsafe.} =
+  ## Convert a list of lexer Tokens into our AST Node(s).
   result = @[]
-  
   if tokens.len == 0:
     return
 
-  # Check for function syntax patterns
+  # 1) Special check for function syntax patterns (e.g. foo(...))
   if tokens.len >= 2 and tokens[0].kind == tkKeyword and tokens[1].kind == tkParenGroup:
-    # Function with parameters
     var funcNode = newNode(nkFunction, tokens[0].value)
     var paramNodes = processFunctionParams(tokens[1].children)
     funcNode.children = paramNodes
     result.add(funcNode)
     return
-  
-  # First check if this sequence contains OrList tokens (||)
+
+  # 2) Check for tkOrList (the double-pipe "||")
   var hasOrList = false
   for token in tokens:
     if token.kind == tkOrList:
       hasOrList = true
       break
-      
-  # If we have OrList tokens, handle them specially
+
   if hasOrList:
+    # Split on tkOrList
     var orListNode = newNode(nkOrList)
-    var currentItem: seq[Node] = @[]
-    var i = 0
-    
-    while i < tokens.len:
-      if tokens[i].kind == tkOrList:
-        # End of current item, add it to OrList node
+    var currentItem: seq[Token] = @[]
+    for t in tokens:
+      if t.kind == tkOrList:
         if currentItem.len > 0:
-          if currentItem.len == 1:
-            orListNode.children.add(currentItem[0])
+          let subNodes = processTokensToNodes(currentItem, false, inFunction)
+          if subNodes.len == 1:
+            orListNode.children.add(subNodes[0])
           else:
-            var seqNode = newNode(nkSequence)
-            seqNode.children = currentItem
-            orListNode.children.add(seqNode)
+            var seqN = newNode(nkSequence)
+            seqN.children = subNodes
+            orListNode.children.add(seqN)
           currentItem = @[]
       else:
-        # Process token as part of current item
-        let node = processToken(tokens[i])
-        currentItem.add(node)
-      i += 1
-    
-    # Add the last item if there is one
+        currentItem.add(t)
+    # Add the last segment
     if currentItem.len > 0:
-      if currentItem.len == 1:
-        orListNode.children.add(currentItem[0])
+      let subNodes = processTokensToNodes(currentItem, false, inFunction)
+      if subNodes.len == 1:
+        orListNode.children.add(subNodes[0])
       else:
-        var seqNode = newNode(nkSequence)
-        seqNode.children = currentItem
-        orListNode.children.add(seqNode)
-    
+        var seqN = newNode(nkSequence)
+        seqN.children = subNodes
+        orListNode.children.add(seqN)
+
     result.add(orListNode)
     return
-  
-  # Check for OR alternations within this sequence (not at top level)
+
+  # 3) Check for any plain tkOr (the single-pipe "|") at this level
   var hasChoice = false
   for token in tokens:
     if token.kind == tkOr:
       hasChoice = true
       break
-  
-  if hasChoice and not isTopLevel:
-    # Create a choice node for internal alternations
+
+  if hasChoice:
+    # We create an nkChoice node by splitting on tkOr
     var choiceNode = newNode(nkChoice)
-    var currentChoice: seq[Node] = @[]
-    var i = 0
-    
-    while i < tokens.len:
-      if tokens[i].kind == tkOr:
-        # End of current choice, add it to choice node
-        if currentChoice.len > 0:
-          if currentChoice.len == 1:
-            choiceNode.children.add(currentChoice[0])
+    var currentItem: seq[Token] = @[]
+    for t in tokens:
+      if t.kind == tkOr:
+        if currentItem.len > 0:
+          let subNodes = processTokensToNodes(currentItem, false, inFunction)
+          if subNodes.len == 1:
+            choiceNode.children.add(subNodes[0])
           else:
-            var seqNode = newNode(nkSequence)
-            seqNode.children = currentChoice
-            choiceNode.children.add(seqNode)
-          currentChoice = @[]
+            var seqN = newNode(nkSequence)
+            seqN.children = subNodes
+            choiceNode.children.add(seqN)
+          currentItem = @[]
       else:
-        # Process token as part of current choice
-        let node = processToken(tokens[i])
-        currentChoice.add(node)
-      i += 1
-    
-    # Add the last choice if there is one
-    if currentChoice.len > 0:
-      if currentChoice.len == 1:
-        choiceNode.children.add(currentChoice[0])
+        currentItem.add(t)
+    # Add the final segment
+    if currentItem.len > 0:
+      let subNodes = processTokensToNodes(currentItem, false, inFunction)
+      if subNodes.len == 1:
+        choiceNode.children.add(subNodes[0])
       else:
-        var seqNode = newNode(nkSequence)
-        seqNode.children = currentChoice
-        choiceNode.children.add(seqNode)
-    
+        var seqN = newNode(nkSequence)
+        seqN.children = subNodes
+        choiceNode.children.add(seqN)
+
     result.add(choiceNode)
     return
-  
-  # Process sequence of tokens normally
+
+  # 4) If there's no OR, check for AND (tkAndList, i.e. "&&")
+  var hasAndList = false
+  for token in tokens:
+    if token.kind == tkAndList:
+      hasAndList = true
+      break
+
+  if hasAndList:
+    # We create an nkAndList node
+    var andListNode = newNode(nkAndList)
+    var currentItem: seq[Token] = @[]
+    for t in tokens:
+      if t.kind == tkAndList:
+        if currentItem.len > 0:
+          let subNodes = processTokensToNodes(currentItem, false, inFunction)
+          if subNodes.len == 1:
+            andListNode.children.add(subNodes[0])
+          else:
+            var seqN = newNode(nkSequence)
+            seqN.children = subNodes
+            andListNode.children.add(seqN)
+          currentItem = @[]
+      else:
+        currentItem.add(t)
+    # Add the last segment
+    if currentItem.len > 0:
+      let subNodes = processTokensToNodes(currentItem, false, inFunction)
+      if subNodes.len == 1:
+        andListNode.children.add(subNodes[0])
+      else:
+        var seqN = newNode(nkSequence)
+        seqN.children = subNodes
+        andListNode.children.add(seqN)
+
+    result.add(andListNode)
+    return
+
+  # 5) If no OR or AND, parse tokens in a normal left-to-right sequence.
   var current: seq[Node] = @[]
   var i = 0
-  
   while i < tokens.len:
-    # Skip commas in function parameters
+    # Commas in function calls are handled in processFunctionParams, so skip here
     if inFunction and tokens[i].kind == tkComma:
       i += 1
       continue
-    
-    # Process the token
     let node = processToken(tokens[i])
     current.add(node)
     i += 1
-  
-  # Add all tokens to result
-  result.add(current)
 
-proc tokensToAST*(tokens: seq[Token]): Node =
-  # First, check if this is a top-level alternation (OR) syntax
-  var hasTopLevelOr = false
-  for token in tokens:
-    if token.kind == tkOr:
-      hasTopLevelOr = true
-      break
-  
-  if hasTopLevelOr:
-    # Split at top-level OR operators
-    var segments: seq[seq[Token]] = @[]
-    var currentSegment: seq[Token] = @[]
-    
-    for token in tokens:
-      if token.kind == tkOr:
-        # End of current segment
-        if currentSegment.len > 0:
-          segments.add(currentSegment)
-          currentSegment = @[]
-      else:
-        currentSegment.add(token)
-    
-    # Add the last segment
-    if currentSegment.len > 0:
-      segments.add(currentSegment)
-    
-    # Process each segment and add to choice node
-    var choiceNode = newNode(nkChoice)
-    for segment in segments:
-      let segmentNodes = processTokensToNodes(segment, false)
-      if segmentNodes.len == 1:
-        choiceNode.children.add(segmentNodes[0])
-      else:
-        var seqNode = newNode(nkSequence)
-        seqNode.children = segmentNodes
-        choiceNode.children.add(seqNode)
-    
-    return choiceNode
+  if current.len == 0:
+    return
+  elif current.len == 1:
+    result.add(current[0])
   else:
-    # Not a top-level alternation, process normally
-    let nodes = processTokensToNodes(tokens)
-    
-    if nodes.len == 1:
-      return nodes[0]
-    else:
-      var root = newNode(nkSequence)
-      root.children = nodes
-      return root
+    var seqNode = newNode(nkSequence)
+    seqNode.children = current
+    result.add(seqNode)
+
+
+proc tokensToAST*(tokens: seq[Token]): Node {.gcsafe.} =
+  # We call processTokensToNodes at top level (isTopLevel = true).
+  # It will handle OR first, then AND, whether at top level or nested.
+  let nodes = processTokensToNodes(tokens, true)
+
+  # If there's exactly one node, return it; else wrap in nkSequence.
+  if nodes.len == 1:
+    return nodes[0]
+  else:
+    var root = newNode(nkSequence)
+    root.children = nodes
+    return root
+
 
 # Helper function to simplify the AST by removing unnecessary nodes and restructuring for better traversal
 proc simplifyAST*(node: Node): Node =
@@ -843,6 +839,10 @@ proc `$`*(node: Node): string =
         
     of nkSeparator:
       result = node.value
+    
+    of nkAndList:
+      result = node.children.mapIt($it).join(" && ")
+
 
 proc treeRepr*(node: Node, indent = 0): string =
   # Print the AST in a tree-like format
@@ -870,18 +870,16 @@ proc treeRepr*(node: Node, indent = 0): string =
       nodeInfo &= "}"
     of nkValueRange:
       nodeInfo &= " [" & node.minValue & "," & node.maxValue & "]"
+    of nkAndList:
+      nodeInfo &= " (All)"
     else:
       discard
   
-  echo ' '.repeat(indent), nodeInfo
-  
-  # # Print children
-  # for child in node.children:
-  #   printAST(child, indent + 2)
-  result = strutils.strip(node.children.mapIt(treeRepr(it, indent + 2)).join("\n"))
+  result = " ".repeat(indent) & nodeInfo & "\n"
+  for child in node.children:
+    result &= child.treeRepr(indent + 2)
 
-
-proc parseSyntax*(syntaxStr: string): Node =
+proc parseSyntax*(syntaxStr: string): Node {.gcsafe.} =
   let tokens = tokenizeSyntax(syntaxStr)
   let ast = tokensToAST(tokens)
   return simplifyAST(ast)
@@ -905,9 +903,8 @@ when isMainModule:
   # <outline-radius>{1,4} [ / <outline-radius>{1,4} ]?
   # snapInterval( <length-percentage>, <length-percentage> ) | snapList( <length-percentage># )
 
-  let syntax1 = "none | [ objects || [ spaces | [ leading-spaces || trailing-spaces ] ] || edges || box-decoration ]"
   # let syntax1 = "hwb( [<hue> | none] [<percentage> | none] [<percentage> | none] [ / [<alpha-value> | none] ]?)"
-  test(syntax1)
+  test("[ [ left | center | right | top | bottom | <length-percentage> ] | [ left | center | right | <length-percentage> ] [ top | center | bottom | <length-percentage> ] | [ center | [ left | right ] <length-percentage>? ] && [ center | [ top | bottom ] <length-percentage>? ] ]")
   
   # echo "\n--------------------------\n"
   
