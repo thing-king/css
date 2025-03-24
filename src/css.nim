@@ -1,13 +1,16 @@
 # std
-import tables
-import strutils
+import macros
+import strutils, tables
 
 # this
+import ./css/util
 import ./css/imports
 import ./css/validator
 
 export ValidatorResult
 
+
+type InvalidCSSValue* = object of ValueError
 
 proc singleIssue(valid: bool, error: string): ValidatorResult =
   var errors: seq[string] = @[]
@@ -55,6 +58,51 @@ proc isValidPropertyValue*(name: string, value: string): ValidatorResult {.gcsaf
 
   let property = imports.properties[name]
   return isValidPropertyValue(property, value)
+
+
+
+macro makeStyle(stylesName: untyped): untyped =
+  expectKind(stylesName, nnkIdent)
+  
+  result = nnkStmtList.newTree(
+    quote do:
+      type `stylesName` = object
+        properties*: Table[string, string]
+  )
+
+  for propertyName, propertyValue in properties:
+    if propertyName == "--*":
+      continue
+    
+    var name = propertyName.kebabToCamelCase
+    var nameEqualsIdent = ident(name & "=")
+    var nameIdent = ident(name)
+
+    result.add quote do:
+      proc `nameEqualsIdent`*(style: var `stylesName`, value: string) {.inline.} =
+        let validationResult = isValidPropertyValue(`propertyName`, value)
+        if validationResult.valid:
+          style.properties[`propertyName`] = value
+        else:
+          raise newException(InvalidCSSValue, "Invalid value for " & `propertyName` & ": \n" & validationResult.errors.join("\n"))
+      proc `nameIdent`*(style: `stylesName`): string {.inline.} =
+        return style.properties[`propertyName`]
+
+    
+  
+
+
+
+makeStyle Styles
+export Styles
+
+var style = Styles()
+
+style.backgroundColor = "orange"
+echo style.backgroundColor
+
+style.objectFit = "red"
+echo style.objectFit
 
 
 # echo isValidPropertyValue("color", "inherit !important;")

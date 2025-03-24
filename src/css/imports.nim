@@ -26,7 +26,9 @@
 #   const properties* = propertiesData.fromJson(Properties)
 
 import macros
-import tables
+import tables, strutils
+
+import util
 
 import cache/css_imports_schema_cache
 import cache/css_imports_cache
@@ -88,3 +90,5 @@ const atRules* = importCSS atRules
 const types* = importCSS types
 const units* = importCSS units
 const selectors* = importCSS selectors
+
+

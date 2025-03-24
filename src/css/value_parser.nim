@@ -39,11 +39,11 @@ proc tokenizeValue*(input: string, wrapRoot: bool = true): seq[ValueToken] {.gcs
   var tokens: seq[ValueToken] = @[]
   var i = 0
 
-  proc skipWhitespace() =
+  proc skipWhitespace(i: var int, input: string) =
     while i < input.len and input[i] in {' ', '\t', '\n', '\r'}:
       inc i
 
-  proc parseString(): ValueToken =
+  proc parseString(i: var int, input: string): ValueToken =
     let quoteChar = input[i]  # either " or '
     inc i  # skip opening quote
     var strVal = ""
@@ -54,7 +54,7 @@ proc tokenizeValue*(input: string, wrapRoot: bool = true): seq[ValueToken] {.gcs
       inc i  # skip closing quote
     return ValueToken(kind: vtkString, value: strVal)
 
-  proc parseNumber(): ValueToken =
+  proc parseNumber(i: var int, input: string): ValueToken =
     var numStr = ""
     # Handle negative numbers - check for minus sign
     if i < input.len and input[i] == '-':
@@ -93,7 +93,7 @@ proc tokenizeValue*(input: string, wrapRoot: bool = true): seq[ValueToken] {.gcs
                         hasNumValue: true, numValue: parseFloat(numStr))
 
   # New function to parse !important
-  proc parseImportant(): ValueToken =
+  proc parseImportant(i: var int, input: string): ValueToken =
     # Store the current position
     let startPos = i
     # Skip the '!'
@@ -152,7 +152,7 @@ proc tokenizeValue*(input: string, wrapRoot: bool = true): seq[ValueToken] {.gcs
     return (args, j)
 
 
-  proc parseIdent(): ValueToken =
+  proc parseIdent(i: var int, input: string): ValueToken =
     var identStr = ""
     while i < input.len and (input[i].isAlphaAscii or input[i].isDigit or input[i] in {'-', '_'}):
       identStr.add(input[i])
@@ -168,21 +168,21 @@ proc tokenizeValue*(input: string, wrapRoot: bool = true): seq[ValueToken] {.gcs
       return ValueToken(kind: vtkIdent, value: identStr)
 
   while i < input.len:
-    skipWhitespace()
+    skipWhitespace(i, input)
     if i >= input.len: break
     
     # Main change: Check for negative numbers before identifiers
     # A negative number is a minus sign followed by a digit or decimal point
     if input[i] == '-' and i + 1 < input.len and (input[i + 1] in {'0'..'9', '.'}):
-      tokens.add(parseNumber())
+      tokens.add(parseNumber(i, input))
     elif input[i] in {'0'..'9', '.'}:
-      tokens.add(parseNumber())
+      tokens.add(parseNumber(i, input))
     elif input[i] in {'"', '\''}:
-      tokens.add(parseString())
+      tokens.add(parseString(i, input))
     elif input[i] == '!':
-      tokens.add(parseImportant())
+      tokens.add(parseImportant(i, input))
     elif input[i] in {'a'..'z', 'A'..'Z', '-', '_'}:
-      tokens.add(parseIdent())
+      tokens.add(parseIdent(i, input))
     elif input[i] == '#':
       var color = "#"
       inc i

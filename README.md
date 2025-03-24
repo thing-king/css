@@ -30,6 +30,27 @@ echo syntaxes["frequency-percentage"].syntax                      # "<frequency>
 ```
 
 
+```nim
+import pkg/css
+
+var style = Styles()
+
+style.backgroundColor = "orange"
+echo style.backgroundColor # works
+
+style.objectFit = "red"
+echo style.objectFit # throws an error
+```
+```
+orange
+/home/savant/css/src/css.nim(101) css
+/home/savant/css/src/css.nim(87) objectFit=
+Error: unhandled exception: Invalid value for object-fit: 
+None of the alternatives matched [InvalidCSSValue]
+Error: execution of an external program failed: '/home/savant/css/bin/css'
+```
+
+
 ```
 Testing: ./tests/data/bootstrap.css
 Testing: `clip`: `rect(0, 0, 0, 0);`

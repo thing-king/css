@@ -28,7 +28,7 @@ import value_parser  # provides: let tokens: seq[ValueToken] = tokenizeValue("â€
 #   temp
 
 # Debug settings
-var DEBUG = false
+var DEBUG {.compileTime} = false
 proc enableDebug*() = DEBUG = true
 proc disableDebug*() = DEBUG = false
 
@@ -45,8 +45,11 @@ const REPLACEMENTS = @[
 ].toTable
 
 proc log(msg: string) =
-  if DEBUG:
-    echo "[LOG] " & msg
+  when defined(js):
+    discard
+  else:
+    if DEBUG:
+      echo "[LOG] " & msg
 
 # Result types
 type
@@ -60,13 +63,13 @@ type
     errors: seq[string]
 
 # Cache for visited properties to avoid infinite recursion
-var visitedProperties {.threadvar.}: HashSet[string]
+# var visitedProperties {.compileTime, threadvar.}: HashSet[string]
 
 #---------------------------------------------------------
 # VALIDATORS
 #---------------------------------------------------------
 
-proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult {.gcsafe.}
+proc validateNode(node: Node, tokens: seq[ValueToken], index: int, visitedProperties: var HashSet[string]): MatchResult {.gcsafe.}
 
 proc isNodeOptional(node: Node): bool =
   ## Helper function to determine if a node is optional
@@ -80,7 +83,7 @@ proc hasOnlyImportant(tokens: seq[ValueToken], index: int): bool =
     return true
   return false
 
-proc validateDeclarationValue(tokens: seq[ValueToken]): bool =
+proc validateDeclarationValue(tokens: seq[ValueToken], visitedProperties: var HashSet[string]): bool =
   ## Validates if tokens form a valid declaration value
   ## (matches any valid CSS property syntax)
   log("Validating declaration-value")
@@ -88,7 +91,7 @@ proc validateDeclarationValue(tokens: seq[ValueToken]): bool =
   # First try to match against all property syntaxes
   for propName, propValue in properties.pairs:
     let syntaxAst = parseSyntax(propValue.syntax)
-    let result = validateNode(syntaxAst, tokens, 0)
+    let result = validateNode(syntaxAst, tokens, 0, visitedProperties)
     
     # Consider it valid if all tokens were consumed
     if result.success and result.index == tokens.len:
@@ -104,7 +107,7 @@ proc validateDeclarationValue(tokens: seq[ValueToken]): bool =
   # Then try to match against all custom syntaxes
   for syntaxName, syntaxValue in syntaxes.pairs:
     let syntaxAst = parseSyntax(syntaxValue.syntax)
-    let result = validateNode(syntaxAst, tokens, 0)
+    let result = validateNode(syntaxAst, tokens, 0, visitedProperties)
     
     # Consider it valid if all tokens were consumed
     if result.success and result.index == tokens.len:
@@ -122,7 +125,7 @@ proc validateDeclarationValue(tokens: seq[ValueToken]): bool =
   return false
 
 
-proc validateBuiltinDataType(typeName: string, token: ValueToken): bool =
+proc validateBuiltinDataType(typeName: string, token: ValueToken, visitedProperties: var HashSet[string]): bool =
   ## Validates if a token matches a built-in data type  
   if (typeName.len == 0 or token.value.len == 0) and typeName != "declaration-value" and token.kind != vtkString:
     log("Empty type name or token value")
@@ -155,10 +158,10 @@ proc validateBuiltinDataType(typeName: string, token: ValueToken): bool =
 
     # If the token is a sequence, we need to validate all of its children
     if token.kind == vtkSequence:
-      return validateDeclarationValue(token.children)
+      return validateDeclarationValue(token.children, visitedProperties)
     # Otherwise, treat single token as a sequence of one
     else:
-      return validateDeclarationValue(@[token])
+      return validateDeclarationValue(@[token], visitedProperties)
 
   case typeName
   of "number":       
@@ -226,7 +229,7 @@ proc validateCalcExpression(token: ValueToken, expectedType: string): bool =
   return false
 
 
-proc validateDataType(node: Node, tokens: seq[ValueToken], index: int): MatchResult =
+proc validateDataType(node: Node, tokens: seq[ValueToken], index: int, visitedProperties: var HashSet[string]): MatchResult {.gcsafe.} =
   ## Validates if tokens match a data type
   log("Validating data type: " & node.value & " at index " & $index)
   
@@ -261,7 +264,7 @@ proc validateDataType(node: Node, tokens: seq[ValueToken], index: int): MatchRes
           if node.max.isSome and matchCount >= node.max.get:
             break
           
-          let res = validateNode(propAst, tokens, curIndex)
+          let res = validateNode(propAst, tokens, curIndex, visitedProperties)
           
           if res.success and res.index > curIndex:
             curIndex = res.index
@@ -280,7 +283,7 @@ proc validateDataType(node: Node, tokens: seq[ValueToken], index: int): MatchRes
       else:
         # Original code for non-quantified property references
         if index < tokens.len:
-          return validateNode(propAst, tokens, index)
+          return validateNode(propAst, tokens, index, visitedProperties)
         else:
           return MatchResult(success: false, index: index, 
                            errors: @["Expected property '" & propName & "', reached end"])
@@ -317,7 +320,7 @@ proc validateDataType(node: Node, tokens: seq[ValueToken], index: int): MatchRes
         # Validate the current token against the data type
         let token = tokens[curIndex]
         
-        if validateBuiltinDataType(node.value, token):
+        if validateBuiltinDataType(node.value, token, visitedProperties):
           inc(curIndex)
           inc(matchCount)
           log("Matched occurrence " & $matchCount & " of " & node.value)
@@ -338,7 +341,7 @@ proc validateDataType(node: Node, tokens: seq[ValueToken], index: int): MatchRes
       if syntaxes.hasKey(node.value):
         let syntaxDef = syntaxes[node.value].syntax
         let subAst = parseSyntax(syntaxDef)
-        let res = validateNode(subAst, tokens, curIndex)
+        let res = validateNode(subAst, tokens, curIndex, visitedProperties)
         
         if res.success and res.index > curIndex:
           curIndex = res.index
@@ -351,11 +354,11 @@ proc validateDataType(node: Node, tokens: seq[ValueToken], index: int): MatchRes
           
           # Handle sequence token specially
           if token.kind == vtkSequence and token.children.len > 0:
-            if validateBuiltinDataType(node.value, token.children[0]):
+            if validateBuiltinDataType(node.value, token.children[0], visitedProperties):
               inc(curIndex)
               inc(matchCount)
               matched = true
-          elif token.kind != vtkComma and validateBuiltinDataType(node.value, token):
+          elif token.kind != vtkComma and validateBuiltinDataType(node.value, token, visitedProperties):
             inc(curIndex)
             inc(matchCount)
             matched = true
@@ -394,14 +397,14 @@ proc validateDataType(node: Node, tokens: seq[ValueToken], index: int): MatchRes
     # Special handling for sequence tokens
     if index < tokens.len and tokens[index].kind == vtkSequence:
       let innerTokens = tokens[index].children
-      let res = validateNode(subAst, innerTokens, 0)
+      let res = validateNode(subAst, innerTokens, 0, visitedProperties)
       
       if res.success and res.index == innerTokens.len:
         return MatchResult(success: true, index: index + 1, errors: @[])
       else:
         return MatchResult(success: false, index: index, errors: res.errors)
     else:
-      return validateNode(subAst, tokens, index)
+      return validateNode(subAst, tokens, index, visitedProperties)
   else:
     log("Using built-in validation for: " & node.value)
     
@@ -410,13 +413,13 @@ proc validateDataType(node: Node, tokens: seq[ValueToken], index: int): MatchRes
                         errors: @["Expected '" & node.value & "' but reached end"])
     
     let token = tokens[index]
-    if validateBuiltinDataType(node.value, token):
+    if validateBuiltinDataType(node.value, token, visitedProperties):
       return MatchResult(success: true, index: index + 1, errors: @[])
     else:
       return MatchResult(success: false, index: index,
                         errors: @["Type '" & node.value & "' rejected token: " & token.value])
 
-proc validateFunction(node: Node, tokens: seq[ValueToken], index: int): MatchResult =
+proc validateFunction(node: Node, tokens: seq[ValueToken], index: int, visitedProperties: var HashSet[string]): MatchResult =
   ## Validates a function node
   log("Validating function: " & node.value)
   
@@ -536,7 +539,7 @@ proc validateFunction(node: Node, tokens: seq[ValueToken], index: int): MatchRes
             break
         
         # Validate the current argument
-        let res = validateNode(nodeToValidate, argTokens, currentArgTokenIndex)
+        let res = validateNode(nodeToValidate, argTokens, currentArgTokenIndex, visitedProperties)
         
         if res.success:
           log("Argument " & $i & " validated successfully, consumed " & 
@@ -571,7 +574,7 @@ proc validateFunction(node: Node, tokens: seq[ValueToken], index: int): MatchRes
             remainingTokensSequence.children.add(argTokens[i])
           
           # Validate against declaration-value
-          let isValid = validateBuiltinDataType("declaration-value", remainingTokensSequence)
+          let isValid = validateBuiltinDataType("declaration-value", remainingTokensSequence, visitedProperties)
           
           if isValid:
             log("All remaining tokens validated successfully as declaration-value")
@@ -654,7 +657,7 @@ proc validateFunction(node: Node, tokens: seq[ValueToken], index: int): MatchRes
               
               # Validate token against the data type
               let token = argTokens[tempIndex]
-              if validateBuiltinDataType(dataType, token):
+              if validateBuiltinDataType(dataType, token, visitedProperties):
                 matchedCount += 1
                 tempIndex += 1
                 log("Matched " & dataType & " #" & $matchedCount & ": " & token.value)
@@ -683,7 +686,7 @@ proc validateFunction(node: Node, tokens: seq[ValueToken], index: int): MatchRes
         let nodeToValidate = if isOptional and astNode.children.len > 0: astNode.children[0] else: astNode
         
         # Validate the current argument
-        let res = validateNode(nodeToValidate, argTokens, argTokenIndex)
+        let res = validateNode(nodeToValidate, argTokens, argTokenIndex, visitedProperties)
         
         if res.success:
           log("Argument " & $astNodeIndex & " validated successfully, consumed " & 
@@ -727,7 +730,7 @@ proc validateFunction(node: Node, tokens: seq[ValueToken], index: int): MatchRes
     # Use the same validation logic as above
     if funcAst.kind == nkFunction:
       # Create a new MatchResult with the extended AST
-      return validateFunction(funcAst, tokens, index)
+      return validateFunction(funcAst, tokens, index, visitedProperties)
   
   # If we get here, we couldn't validate the function
   return MatchResult(success: false, index: index,
@@ -737,7 +740,7 @@ proc isVarFunction(token: ValueToken): bool =
   ## Helper function to check if a token is a var() function
   return token.kind == vtkFunc and token.value == "var"
 
-proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult {.gcsafe.} =
+proc validateNode(node: Node, tokens: seq[ValueToken], index: int, visitedProperties: var HashSet[string]): MatchResult {.gcsafe.} =
   ## Main validator function that handles all node kinds
   log("Validating node: " & $node.kind & " '" & node.value & "' at index " & $index)
   
@@ -775,16 +778,16 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult 
     return MatchResult(success: true, index: index + 1, errors: @[])
   
   of nkDataType:
-    return validateDataType(node, tokens, index)
+    return validateDataType(node, tokens, index, visitedProperties)
   
   of nkFunction:
-    return validateFunction(node, tokens, index)
+    return validateFunction(node, tokens, index, visitedProperties)
   
   of nkSequence:
     var currentIndex = index
     
     for child in node.children:
-      let res = validateNode(child, tokens, currentIndex)
+      let res = validateNode(child, tokens, currentIndex, visitedProperties)
       if not res.success:
         return MatchResult(success: false, index: currentIndex, errors: res.errors)
       currentIndex = res.index
@@ -801,7 +804,7 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult 
     var allErrors: seq[string] = @[]
     
     for child in node.children:
-      let res = validateNode(child, tokens, index)
+      let res = validateNode(child, tokens, index, visitedProperties)
       if res.success:
         return res
       allErrors.add(res.errors)
@@ -823,7 +826,7 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult 
         if matched[i]: continue
         
         let child = node.children[i]
-        let res = validateNode(child, tokens, currentIndex)
+        let res = validateNode(child, tokens, currentIndex, visitedProperties)
         
         if res.success and res.index > currentIndex:
           matched[i] = true
@@ -858,7 +861,7 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult 
         if matchedComponents[i]:
           continue
         
-        let childRes = validateNode(node.children[i], tokens, currentIndex)
+        let childRes = validateNode(node.children[i], tokens, currentIndex, visitedProperties)
         if childRes.success and childRes.index > currentIndex:
           log("Matched component " & $i & " at index " & $currentIndex)
           matchedComponents[i] = true
@@ -878,7 +881,7 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult 
     if node.children.len == 0:
       return MatchResult(success: true, index: index, errors: @[])
     
-    let res = validateNode(node.children[0], tokens, index)
+    let res = validateNode(node.children[0], tokens, index, visitedProperties)
     if res.success:
       return res
     else:
@@ -889,7 +892,7 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult 
     var currentIndex = index
     
     while currentIndex < tokens.len:
-      let res = validateNode(node.children[0], tokens, currentIndex)
+      let res = validateNode(node.children[0], tokens, currentIndex, visitedProperties)
       if res.success and res.index > currentIndex:
         currentIndex = res.index
       else:
@@ -903,7 +906,7 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult 
                         errors: @["OneOrMore node has no child to match"])
     
     # Must have at least one match
-    let firstMatch = validateNode(node.children[0], tokens, index)
+    let firstMatch = validateNode(node.children[0], tokens, index, visitedProperties)
     if not firstMatch.success:
       return MatchResult(success: false, index: index,
                         errors: @["Expected at least one occurrence"])
@@ -912,7 +915,7 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult 
     
     # Try to match more if possible
     while currentIndex < tokens.len:
-      let res = validateNode(node.children[0], tokens, currentIndex)
+      let res = validateNode(node.children[0], tokens, currentIndex, visitedProperties)
       if res.success and res.index > currentIndex:
         currentIndex = res.index
       else:
@@ -923,7 +926,7 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult 
   of nkCommaList:
     if tokens.len > 0 and not tokens.any(proc(t: ValueToken): bool = t.kind == vtkComma):
       # Validate the entire sequence as a single item
-      let res = validateNode(node.children[0], tokens, 0)
+      let res = validateNode(node.children[0], tokens, 0, visitedProperties)
       if res.success:
         return MatchResult(success: true, index: tokens.len, errors: @[])
       else:
@@ -949,7 +952,7 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult 
       while i < tokens.len:
         if tokens[i].kind != vtkComma:
           # Validate this token is the right type
-          if not validateBuiltinDataType(dataType, tokens[i]):
+          if not validateBuiltinDataType(dataType, tokens[i], visitedProperties):
             return MatchResult(success: false, index: index,
                             errors: @["Item at position " & $itemCount & " is not a valid " & dataType])
           
@@ -1033,7 +1036,7 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult 
         return MatchResult(success: false, index: index,
                           errors: @["Empty item in comma list"])
       
-      let res = validateNode(node.children[0], itemTokens, 0)
+      let res = validateNode(node.children[0], itemTokens, 0, visitedProperties)
       
       if not res.success:
         if isFirst:
@@ -1063,7 +1066,7 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult 
     let seqToken = tokens[index]
     
     for childToken in seqToken.children:
-      let res = validateNode(node.children[0], @[childToken], 0)
+      let res = validateNode(node.children[0], @[childToken], 0, visitedProperties)
       if not res.success:
         return MatchResult(success: false, index: index, 
                           errors: @["Invalid item in space list"])
@@ -1080,7 +1083,7 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult 
     
     # Try to match the pattern multiple times
     while currentIndex < tokens.len:
-      let childRes = validateNode(node.children[0], tokens, currentIndex)
+      let childRes = validateNode(node.children[0], tokens, currentIndex, visitedProperties)
       
       if childRes.success and childRes.index > currentIndex:
         currentIndex = childRes.index
@@ -1144,7 +1147,7 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult 
       return MatchResult(success: false, index: index,
                         errors: @["Required node has no child to match"])
     
-    let res = validateNode(node.children[0], tokens, index)
+    let res = validateNode(node.children[0], tokens, index, visitedProperties)
     
     if not res.success:
       return MatchResult(success: false, index: index,
@@ -1165,7 +1168,7 @@ proc validateCSSValue*(syntaxStr, valueStr: string): ValidatorResult {.gcsafe.} 
   ## Validates a CSS value against a syntax definition
   
   # Initialize visited properties set to prevent circular references
-  visitedProperties = initHashSet[string]()
+  # visitedProperties = initHashSet[string]()
   
   # Parse syntax and value
   let ast = parseSyntax(syntaxStr)
@@ -1191,7 +1194,8 @@ proc validateCSSValue*(syntaxStr, valueStr: string): ValidatorResult {.gcsafe.} 
                          tokens
   
   # Validate tokens against syntax AST
-  let result = validateNode(ast, effectiveTokens, 0)
+  var visitedProperties = initHashSet[string]()
+  let result = validateNode(ast, effectiveTokens, 0, visitedProperties)
   
   # Build final result
   if result.success:
