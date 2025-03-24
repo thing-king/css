@@ -1,4 +1,4 @@
-import strutils, os
+import strutils, os, times
 
 import ../src/css
 
@@ -12,6 +12,9 @@ proc testFile(path: string) =
     raise newException(Exception, "File not found: " & path)
   let content = readFile(path)
 
+  echo "\nTesting: " & path
+
+  let startTime = getTime()
   var errorCount = 0
   for line in content.splitLines():
     let stripped = line.strip()
@@ -20,7 +23,7 @@ proc testFile(path: string) =
       if splits.len == 2:
         let propName = splits[0]
         let propValue = splits[1].strip()
-        if propName.len > 2 and not propName.contains(" ") and not propValue.endsWith("{"):
+        if propName.len > 2 and not propName.contains(" ") and not propValue.endsWith("{") and not propValue.endsWith(","):
           let validation = isValidPropertyValue(propName, propValue)
           
           if ONLY_SHOW_ERRORS and validation.valid:
@@ -32,12 +35,22 @@ proc testFile(path: string) =
             errorCount.inc()
             echo "  Errors: ".red
             for error in validation.errors:
-              echo "    - " & error
+              if error.contains("Invalid property name"):
+                echo "    - " & error.bgRed
+              else:
+                echo "    - " & error
 
           if errorCount >= MAX_ERRORS:
             echo "\nMax errors reached.".red
             break
-
+  echo "Error Count: " & $errorCount & " / " & $MAX_ERRORS & " max"
+  if errorCount != MAX_ERRORS:
+    echo "Finished in: " & $(getTime() - startTime)
 
 when isMainModule:
   testFile("./tests/data/bootstrap.css")
+  # testFile("./tests/data/bootstrap-utilities.css")
+  # testFile("./tests/data/bootstrap-reboot.css")
+  # testFile("./tests/data/bootstrap-grid.css")
+
+  # testFile("./tests/data/foundation.css")

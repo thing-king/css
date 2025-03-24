@@ -4145,7 +4145,7 @@
     "mdn_url": "https://developer.mozilla.org/docs/Web/CSS/column-fill"
   },
   "column-gap": {
-    "syntax": "normal | <length-percentage>",
+    "syntax": "c",
     "media": "visual",
     "inherited": false,
     "animationType": "lpc",

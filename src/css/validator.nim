@@ -34,7 +34,14 @@ proc disableDebug*() = DEBUG = false
 
 const REPLACEMENTS = @[
   ("-webkit-match-parent", "match-parent"),
-  ("currentcolor", "currentColor")
+  ("currentcolor", "currentColor"),
+  ("-webkit-max-content", "max-content"),
+  ("-webkit-min-content", "min-content"),
+  ("-moz-max-content", "max-content"),
+  ("-moz-min-content", "min-content"),
+  ("RGBA(", "rgba("),
+  ("RGB(", "rgb("),
+  ("-webkit-sticky", "sticky"),
 ].toTable
 
 proc log(msg: string) =
@@ -117,7 +124,7 @@ proc validateDeclarationValue(tokens: seq[ValueToken]): bool =
 
 proc validateBuiltinDataType(typeName: string, token: ValueToken): bool =
   ## Validates if a token matches a built-in data type  
-  if (typeName.len == 0 or token.value.len == 0) and typeName != "declaration-value":
+  if (typeName.len == 0 or token.value.len == 0) and typeName != "declaration-value" and token.kind != vtkString:
     log("Empty type name or token value")
     return false
   
@@ -914,6 +921,16 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult 
     return MatchResult(success: true, index: currentIndex, errors: @[])
   
   of nkCommaList:
+    if tokens.len > 0 and not tokens.any(proc(t: ValueToken): bool = t.kind == vtkComma):
+      # Validate the entire sequence as a single item
+      let res = validateNode(node.children[0], tokens, 0)
+      if res.success:
+        return MatchResult(success: true, index: tokens.len, errors: @[])
+      else:
+        return MatchResult(success: false, index: index, 
+                          errors: @["Single item in comma list is invalid: " & res.errors.join(", ")])
+  
+
     # Add special handling for data types with hash-based quantification
     if node.children.len == 1 and 
       node.children[0].kind == nkDataType and 
@@ -1200,8 +1217,8 @@ proc validateCSSValue*(syntaxStr, valueStr: string): ValidatorResult =
 when isMainModule:
   enableDebug()
 
-  let syntaxStr = "normal | none | [ <content-replacement> | <content-list> ] [/ [ <string> | <counter> ]+ ]?"
-  let valueStr = "''"
+  let syntaxStr = "[ <length-percentage> | left | center | right | top | bottom ] | [ [ <length-percentage> | left | center | right ] && [ <length-percentage> | top | center | bottom ] ] <length>?"
+  let valueStr = "0 0"
 
   
   # let syntaxStr = "<declaration-value>"

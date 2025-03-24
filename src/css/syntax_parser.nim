@@ -478,11 +478,65 @@ proc processToken(token: Token): Node {.gcsafe.} =
       result = newNode(nkSequence)
 
 proc processTokensToNodes(tokens: seq[Token], isTopLevel: bool = true, inFunction: bool = false): seq[Node] {.gcsafe.} =
-  ## Convert a list of lexer Tokens into our AST Node(s).
   result = @[]
   if tokens.len == 0:
     return
 
+  # For top-level processing, specifically check for function definitions separated by OR
+  if isTopLevel:
+    # First look for OR tokens
+    var orPositions: seq[int] = @[]
+    for i in 0..<tokens.len:
+      if tokens[i].kind == tkOr:
+        orPositions.add(i)
+    
+    # If we have OR tokens at the top level, split and process each alternative
+    if orPositions.len > 0:
+      var choiceNode = newNode(nkChoice)
+      var start = 0
+      
+      # Process each segment between OR tokens
+      for pos in orPositions:
+        let segment = tokens[start..<pos]
+        if segment.len > 0:
+          # Check if this segment is a function definition
+          if segment.len >= 2 and segment[0].kind == tkKeyword and segment[1].kind == tkParenGroup:
+            var funcNode = newNode(nkFunction, segment[0].value)
+            var paramNodes = processFunctionParams(segment[1].children)
+            funcNode.children = paramNodes
+            choiceNode.children.add(funcNode)
+          else:
+            # Not a function, process normally
+            let subNodes = processTokensToNodes(segment, false, inFunction)
+            if subNodes.len == 1:
+              choiceNode.children.add(subNodes[0])
+            else:
+              var seqNode = newNode(nkSequence)
+              seqNode.children = subNodes
+              choiceNode.children.add(seqNode)
+        start = pos + 1
+      
+      # Process the final segment after the last OR
+      let finalSegment = tokens[start..<tokens.len]
+      if finalSegment.len > 0:
+        if finalSegment.len >= 2 and finalSegment[0].kind == tkKeyword and finalSegment[1].kind == tkParenGroup:
+          var funcNode = newNode(nkFunction, finalSegment[0].value)
+          var paramNodes = processFunctionParams(finalSegment[1].children)
+          funcNode.children = paramNodes
+          choiceNode.children.add(funcNode)
+        else:
+          let subNodes = processTokensToNodes(finalSegment, false, inFunction)
+          if subNodes.len == 1:
+            choiceNode.children.add(subNodes[0])
+          else:
+            var seqNode = newNode(nkSequence)
+            seqNode.children = subNodes
+            choiceNode.children.add(seqNode)
+      
+      result.add(choiceNode)
+      return
+  
+  # The rest of the original function continues as before...
   # 1) Special check for function syntax patterns (e.g. foo(...))
   if tokens.len >= 2 and tokens[0].kind == tkKeyword and tokens[1].kind == tkParenGroup:
     var funcNode = newNode(nkFunction, tokens[0].value)
@@ -905,7 +959,8 @@ when isMainModule:
 
   # let syntax1 = "hwb( [<hue> | none] [<percentage> | none] [<percentage> | none] [ / [<alpha-value> | none] ]?)"
   test("[ [ left | center | right | top | bottom | <length-percentage> ] | [ left | center | right | <length-percentage> ] [ top | center | bottom | <length-percentage> ] | [ center | [ left | right ] <length-percentage>? ] && [ center | [ top | bottom ] <length-percentage>? ] ]")
-  
+  test("rgba( <percentage>{3} [ / <alpha-value> ]? ) | rgba( <number>{3} [ / <alpha-value> ]? ) | rgba( <percentage>#{3} , <alpha-value>? ) | rgba( <number>#{3} , <alpha-value>? )")
+
   # echo "\n--------------------------\n"
   
   # let syntax2 = "<color> | <image># | <url>"

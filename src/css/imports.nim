@@ -72,6 +72,12 @@ const properties* = importCSSAndModify properties:
   properties["-webkit-transition"] = PropertiesValue(syntax: "<single-transition>#")
   properties["-webkit-print-color-adjust"] = PropertiesValue(syntax: "economy | exact")
   properties["color-adjust"] = PropertiesValue(syntax: "economy | exact")
+  properties["-moz-transition"] = PropertiesValue(syntax: "<single-transition>#")
+  properties["-webkit-text-decoration-color"] = PropertiesValue(syntax: "<color>")
+  properties["-webkit-backface-visibility"] = PropertiesValue(syntax: "visible | hidden")
+  properties["-o-object-fit"] = PropertiesValue(syntax: "fill | contain | cover | none | scale-down")
+  properties["-moz-column-gap"] = PropertiesValue(syntax: "normal | <length-percentage>")
+  properties["-moz-user-select"] = PropertiesValue(syntax: "auto | text | none | all")
 
 const syntaxes* = importCSSAndModify syntaxes:
   syntaxes["url"] = SyntaxesValue(syntax: "url( <string> )")

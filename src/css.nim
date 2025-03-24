@@ -40,6 +40,9 @@ proc isValidPropertyValue*(property: PropertiesValue, value: string): ValidatorR
   var vv = value
   if vv.endsWith(";"):
     vv = vv[0..^2]
+  if vv.endsWith(" !important"):
+    vv = vv[0..^12]
+  
   if vv in ["initial", "unset", "revert", "inherit"]:
     return ValidatorResult(valid: true)
 
@@ -54,4 +57,4 @@ proc isValidPropertyValue*(name: string, value: string): ValidatorResult =
   return isValidPropertyValue(property, value)
 
 
-# echo isValidPropertyValue("color", "inherit;")
+# echo isValidPropertyValue("color", "inherit !important;")
