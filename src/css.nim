@@ -34,7 +34,7 @@ proc isValidPropertyName*(name: string): ValidatorResult {.gcsafe.} =
 proc getProperty*(name: string): PropertiesValue {.gcsafe.} =
   return imports.properties[name]
 
-proc isValidPropertyValue*(property: PropertiesValue, value: string): ValidatorResult =
+proc isValidPropertyValue*(property: PropertiesValue, value: string): ValidatorResult {.gcsafe.} =
   let syntax = property.syntax
 
   var vv = value
@@ -48,7 +48,7 @@ proc isValidPropertyValue*(property: PropertiesValue, value: string): ValidatorR
 
   return validateCSSValue(syntax, vv)
 
-proc isValidPropertyValue*(name: string, value: string): ValidatorResult =
+proc isValidPropertyValue*(name: string, value: string): ValidatorResult {.gcsafe.} =
   let validName = isValidPropertyName(name)
   if not validName.valid:
     return validName

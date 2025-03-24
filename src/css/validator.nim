@@ -66,7 +66,7 @@ var visitedProperties {.threadvar.}: HashSet[string]
 # VALIDATORS
 #---------------------------------------------------------
 
-proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult
+proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult {.gcsafe.}
 
 proc isNodeOptional(node: Node): bool =
   ## Helper function to determine if a node is optional
@@ -737,7 +737,7 @@ proc isVarFunction(token: ValueToken): bool =
   ## Helper function to check if a token is a var() function
   return token.kind == vtkFunc and token.value == "var"
 
-proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult =
+proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult {.gcsafe.} =
   ## Main validator function that handles all node kinds
   log("Validating node: " & $node.kind & " '" & node.value & "' at index " & $index)
   
@@ -1161,7 +1161,7 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int): MatchResult 
 # PUBLIC API
 #---------------------------------------------------------
 
-proc validateCSSValue*(syntaxStr, valueStr: string): ValidatorResult =
+proc validateCSSValue*(syntaxStr, valueStr: string): ValidatorResult {.gcsafe.} =
   ## Validates a CSS value against a syntax definition
   
   # Initialize visited properties set to prevent circular references
