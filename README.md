@@ -38,8 +38,18 @@ var style = Styles()
 style.backgroundColor = "orange"
 echo style.backgroundColor # works
 
-style.objectFit = "red"
-echo style.objectFit # throws an error
+# compile-time values validated at compile-time
+style.objectFit = "red" # throws an error
+echo style.objectFit
+
+var val = "test"
+style.objectFit = val # no error until runtime
+
+# inject values with ``
+var red = "red"
+style.color `red`
+style.border 1.px solid `red`
+style.border "1px solid " & red
 ```
 ```
 orange

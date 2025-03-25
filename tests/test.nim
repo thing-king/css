@@ -47,8 +47,26 @@ proc testFile(path: string) =
   if errorCount != MAX_ERRORS:
     echo "Finished in: " & $(getTime() - startTime)
 
+proc testSingle(propertyName: string, propertyValue: string) =
+  echo "\nTesting: `" & propertyName & "`: `" & propertyValue & "`"
+  let startTime = getTime()
+  let validation = isValidPropertyValue(propertyName, propertyValue)
+  if validation.valid:
+    echo "  OK".green
+  else:
+    echo "  Errors: ".red
+    for error in validation.errors:
+      if error.contains("Invalid property name"):
+        echo "    - " & error.bgRed
+      else:
+        echo "    - " & error
+
+  echo "Finished in: " & $(getTime() - startTime)
+
+
 when isMainModule:
-  testFile("./tests/data/bootstrap.css")
+  # testFile("./tests/data/bootstrap.css")
+  testSingle("background-color", "rgba(1,2,3 / 0.5)")
   # testFile("./tests/data/bootstrap-utilities.css")
   # testFile("./tests/data/bootstrap-reboot.css")
   # testFile("./tests/data/bootstrap-grid.css")

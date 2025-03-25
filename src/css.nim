@@ -4,7 +4,6 @@ import strutils, tables
 
 # this
 import ./css/util
-import ./css/imports
 import ./css/validator
 
 export ValidatorResult
@@ -18,7 +17,14 @@ proc singleIssue(valid: bool, error: string): ValidatorResult =
     errors.add(error)
   return ValidatorResult(valid: valid, errors: errors)
 
+proc replaceUnits*(input: string): string =
+  var unitsSeq = @["%"]
+  for unitName in units:
+    unitsSeq.add(unitName)
 
+  result = input
+  for unit in unitsSeq:
+    result = result.replace("." & unit, unit)
 
 
 proc isValidUnitValue*(value: string): ValidatorResult {.gcsafe.} =
@@ -75,34 +81,163 @@ macro makeStyle(stylesName: untyped): untyped =
       continue
     
     var name = propertyName.kebabToCamelCase
-    var nameEqualsIdent = ident(name & "=")
+    var nameEqualsIdent = nnkAccQuoted.newTree(ident(name & "="))
     var nameIdent = ident(name)
 
+    # echo nameEqualsIdent
     result.add quote do:
-      proc `nameEqualsIdent`*(style: var `stylesName`, value: string) {.inline.} =
-        let validationResult = isValidPropertyValue(`propertyName`, value)
-        if validationResult.valid:
-          style.properties[`propertyName`] = value
-        else:
-          raise newException(InvalidCSSValue, "Invalid value for " & `propertyName` & ": \n" & validationResult.errors.join("\n"))
+      # proc `nameEqualsIdent`*(style: var `stylesName`, value: string) {.inline.} =
+      #   let validationResult = isValidPropertyValue(`propertyName`, value)
+      #   if validationResult.valid:
+      #     style.properties[`propertyName`] = value
+      #   else:
+      #     raise newException(InvalidCSSValue, "Invalid value for " & `propertyName` & ": \n" & validationResult.errors.join("\n"))
       proc `nameIdent`*(style: `stylesName`): string {.inline.} =
         return style.properties[`propertyName`]
+      
+      macro `nameIdent`*(style: var `stylesName`, value: untyped): untyped =
+        echo value.treeRepr
+        echo value.repr
+        
+        var isPure = true
+        if value.repr.contains("`"):
+          isPure = false
+      
+        if not isPure:
+          var node: NimNode = newEmptyNode()
+          var str = ""
+          var isInside = false
+          for i, c in value.repr:
+            if c == '`':
+              if isInside:
+                isInside = false
 
+                if node.kind == nnkEmpty:
+                  node = ident(str)
+                else:
+                  node = nnkInfix.newTree(
+                    ident("&"),
+                    node,
+                    ident(str)
+                  )
+                str = ""
+              else:
+                isInside = true
+                
+                if node.kind == nnkEmpty:
+                  node = newStrLitNode(str)
+                else:
+                  node = nnkInfix.newTree(
+                    ident("&"),
+                    node,
+                    newStrLitNode(str.replaceUnits())
+                  )
+                str = ""
+            else:
+              str.add c
+          
+          result = nnkAsgn.newTree(
+            nnkBracketExpr.newTree(
+              nnkDotExpr.newTree(
+                style,
+                ident("properties")
+              ),
+              newStrLitNode(`propertyName`)
+            ),
+            node
+          )
+        else:
+          let valueStr = value.repr.replaceUnits()
+          let validationResult = isValidPropertyValue(`propertyName`, valueStr)
+          if not validationResult.valid:
+            error "Invalid value for " & `propertyName` & ": " & validationResult.errors.join("\n"), value
+
+          result = nnkAsgn.newTree(
+            nnkBracketExpr.newTree(
+              nnkDotExpr.newTree(
+                style,
+                ident("properties")
+              ),
+              newStrLitNode(`propertyName`)
+            ),
+            newStrLitNode(valueStr)
+          )
+
+
+      macro `nameEqualsIdent`*(style: var `stylesName`, value: untyped): untyped =
+        echo value.treeRepr
+        if value.kind == nnkStrLit:
+          let validationResult = isValidPropertyValue(`propertyName`, value.strVal)
+          if validationResult.valid:
+            result = nnkAsgn.newTree(
+              nnkBracketExpr.newTree(
+                nnkDotExpr.newTree(
+                  style,
+                  ident("properties")
+                ),
+                newStrLitNode(`propertyName`)
+              ),
+              value
+            )
+          else:
+            error "Invalid value for " & `propertyName` & ": " & validationResult.errors.join("\n"), value
+        else:
+          result = nnkAsgn.newTree(
+            nnkBracketExpr.newTree(
+              nnkDotExpr.newTree(
+                style,
+                ident("properties")
+              ),
+              newStrLitNode(`propertyName`)
+            ),
+            newStrLitNode(value.repr)
+          )
     
+  result.add quote do:
+    proc newStyles*(): Styles =
+      return Styles(properties: initTable[string, string]())
   
-
-
 
 makeStyle Styles
 export Styles
 
-var style = Styles()
 
-style.backgroundColor = "orange"
-echo style.backgroundColor
+# var styles = newStyles()
 
-style.objectFit = "red"
-echo style.objectFit
+# let aut = "auto"
+# styles.margin = "1px"
+# styles.margin = `aut`
+
+
+# echo properties
+
+# macro `test=`(styles: typed, value: untyped): untyped =
+#   if value.kind == nnkStrLit:
+#     let validationResult = isValidPropertyValue("object-fit", value.strVal)
+#     if validationResult.valid:
+#       result = quote do:
+#         `styles`.internalObjectFit = `value`
+#     else:
+#       error "Invalid value for object-fit: " & validationResult.errors.join("\n"), value
+#   else:
+#     result = quote do:
+#       `styles`.internalObjectFit = `value`
+
+# styles.test = "dsadsa"
+
+
+
+
+# var style = Styles()
+# style.test = "5"
+# echo style.objectFit
+
+
+# style.backgroundColor = "orange"
+# echo style.backgroundColor
+
+# style.objectFit = "red"
+# echo style.objectFit
 
 
 # echo isValidPropertyValue("color", "inherit !important;")

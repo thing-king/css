@@ -6,6 +6,7 @@ import pkg/colors
 
 # this
 import imports   # gives access to `syntaxes` and `functions`
+export imports
 import syntax_parser # provides: let ast: Node = parseSyntax("…")
 import value_parser  # provides: let tokens: seq[ValueToken] = tokenizeValue("…")
 

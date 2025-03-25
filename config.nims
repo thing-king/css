@@ -1,0 +1,6 @@
+switch("mm", "refc")
+switch("cc", "tcc")
+switch("tlsEmulation", "on")
+switch("threads", "off")
+switch("lineDir", "off")
+hint("XDeclaredButNotUsed", false)
