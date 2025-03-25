@@ -43,6 +43,9 @@ proc isValidPropertyName*(name: string): ValidatorResult {.gcsafe.} =
 proc getProperty*(name: string): PropertiesValue {.gcsafe.} =
   return imports.properties[name]
 
+proc isValidVariableValue*(value: string): ValidatorResult {.gcsafe.} =
+  return validateCSSValue("<declaration-value>", value)
+
 proc isValidPropertyValue*(property: PropertiesValue, value: string): ValidatorResult {.gcsafe.} =
   let syntax = property.syntax
 
@@ -96,8 +99,8 @@ macro makeStyle(stylesName: untyped): untyped =
         return style.properties[`propertyName`]
       
       macro `nameIdent`*(style: var `stylesName`, value: untyped): untyped =
-        echo value.treeRepr
-        echo value.repr
+        # echo value.treeRepr
+        # echo value.repr
         
         var isPure = true
         if value.repr.contains("`"):
@@ -165,7 +168,7 @@ macro makeStyle(stylesName: untyped): untyped =
 
 
       macro `nameEqualsIdent`*(style: var `stylesName`, value: untyped): untyped =
-        echo value.treeRepr
+        # echo value.treeRepr
         if value.kind == nnkStrLit:
           let validationResult = isValidPropertyValue(`propertyName`, value.strVal)
           if validationResult.valid:
@@ -193,16 +196,26 @@ macro makeStyle(stylesName: untyped): untyped =
             newStrLitNode(value.repr)
           )
     
+
+  let toStr = nnkAccQuoted.newTree(ident("$"))
   result.add quote do:
-    proc newStyles*(): Styles =
+    proc newStyles*(): `stylesName` =
       return Styles(properties: initTable[string, string]())
   
+    proc `toStr`*(styles: `stylesName`): string =
+      for key, value in styles.properties:
+        result.add key & ": " & value & "; "
+      return result[0..^3]
 
 makeStyle Styles
 export Styles
 
 
 # var styles = newStyles()
+# styles.color = "red"
+# styles.margin 1.px
+
+# echo $styles
 
 # let aut = "auto"
 # styles.margin = "1px"

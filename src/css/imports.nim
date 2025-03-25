@@ -29,6 +29,7 @@ import macros
 import tables
 
 import cache/css_imports_schema_cache
+# import cache/old_css_imports_cache
 import cache/css_imports_cache
 export css_imports_schema_cache
 # export css_imports_cache
@@ -90,7 +91,7 @@ const functions* = importCSSAndModify functions:
 # const atRules* = importCSS atRules
 # const types* = importCSS types
 # const units* = importCSS units
-# const selectors* = importCSS selectors
+const selectors* = importCSS selectors
 
 const units* = @[
   "cap",
@@ -268,8 +269,8 @@ const units* = @[
 #     result = "var $1 = $2\n".format(varName, getFieldValueRepr(val, ""))
 
 # # The main entry point that accepts a custom root variable name
-# proc repr*[T](val: T, rootVarName: string = "functions"): string =
+# proc repr*[T](val: T, rootVarName: string = "selectors"): string =
 #   result = genRepr(val, rootVarName)
 
 # # echo syntaxes.repr
-# echo functions.repr
+# echo selectors.repr

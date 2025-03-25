@@ -1189,20 +1189,20 @@ type
 
 ## Selectors
 
-# type
-#   SelectorsValueGroups* = seq[definitionsGroupList]
-# type
-#   SelectorsValueStatus* = enum
-#     svsSTANDARD, svsNONSTANDARD, svsEXPERIMENTAL, svsOBSOLETE
-# type
-#   SelectorsValue* = object
-#     syntax*: string
-#     groups*: SelectorsValueGroups
-#     status*: SelectorsValueStatus
-#     mdn_url*: string
+type
+  SelectorsValueGroups* = seq[definitionsGroupList]
+type
+  SelectorsValueStatus* = enum
+    svsSTANDARD, svsNONSTANDARD, svsEXPERIMENTAL, svsOBSOLETE
+type
+  SelectorsValue* = object
+    syntax*: string
+    groups*: SelectorsValueGroups
+    status*: SelectorsValueStatus
+    mdn_url*: string
 
-# type
-#   Selectors* = Table[string, SelectorsValue]
+type
+  Selectors* = Table[string, SelectorsValue]
 # proc enumHook*(s: string; v: var SelectorsValueStatus) =
 #   var SelectorsValueStatusTable: Table[string, SelectorsValueStatus] = initTable[
 #       string, SelectorsValueStatus]()
