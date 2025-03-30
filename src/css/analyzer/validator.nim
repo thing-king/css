@@ -5,7 +5,8 @@ import strutils, sequtils, tables, algorithm, options, sets
 import pkg/colors
 
 # this
-import imports   # gives access to `syntaxes` and `functions`
+import ../types
+import ../imports/imports   # gives access to `syntaxes` and `functions`
 export imports
 import syntax_parser # provides: let ast: Node = parseSyntax("…")
 import value_parser  # provides: let tokens: seq[ValueToken] = tokenizeValue("…")
@@ -52,16 +53,6 @@ proc log(msg: string) =
     if DEBUG:
       echo "[LOG] " & msg
 
-# Result types
-type
-  ValidatorResult* = object
-    valid*: bool
-    errors*: seq[string]
-
-  MatchResult = object
-    success: bool
-    index: int
-    errors: seq[string]
 
 # Cache for visited properties to avoid infinite recursion
 # var visitedProperties {.compileTime, threadvar.}: HashSet[string]
@@ -141,7 +132,7 @@ proc validateBuiltinDataType(typeName: string, token: ValueToken, visitedPropert
   if token.kind == vtkFunc and token.value == "calc":
     # calc() is valid for these data types
     let calcAllowedTypes = ["length", "time", "frequency", "angle", "number", "percentage", 
-                           "length-percentage", "flex", "integer"]
+                           "length-percentage", "flex", "integer", "declaration-value"]
     
     if typeName in calcAllowedTypes:
       log("Special handling: calc() function accepted for type: " & typeName)
@@ -1188,6 +1179,44 @@ proc validateCSSValue*(syntaxStr, valueStr: string): ValidatorResult {.gcsafe.} 
   log "Value Tokens:"
   log tokens.treeRepr
 
+
+  proc isVarToken(token: ValueToken): bool =
+    return token.kind == vtkFunc and token.value == "var"
+  # var areAllVars = false
+  # proc checkAreAllVars(tokens: seq[ValueToken]): bool =
+  #   for token in tokens:
+  #     if isVarToken(token):
+  #       areAllVars = true
+  #     elif token.kind == vtkSequence:
+  #       areAllVars = checkAreAllVars(token.children)
+  #       if not areAllVars:
+  #         break
+  #     else:
+  #       areAllVars = false
+  #       break
+  #   return areAllVars
+  # if checkAreAllVars(tokens):
+  #   log "All tokens are var() functions"
+  #   return ValidatorResult(valid: true, errors: @[])
+
+
+  var isVar = false
+  if tokens.len == 1 and tokens[0].kind == vtkSequence:
+    for child in tokens[0].children:
+      if isVarToken(child):
+        isVar = true
+        break
+  else:
+    for child in tokens:
+      if isVarToken(child):
+        isVar = true
+        break
+  if isVar:
+    log "A token is a var() function"
+    return ValidatorResult(valid: true, errors: @[])
+
+
+
   # Handle top-level sequence token if present
   var effectiveTokens = if tokens.len == 1 and tokens[0].kind == vtkSequence:
                          tokens[0].children
@@ -1222,8 +1251,8 @@ proc validateCSSValue*(syntaxStr, valueStr: string): ValidatorResult {.gcsafe.} 
 when isMainModule:
   enableDebug()
 
-  let syntaxStr = "[ <length-percentage> | left | center | right | top | bottom ] | [ [ <length-percentage> | left | center | right ] && [ <length-percentage> | top | center | bottom ] ] <length>?"
-  let valueStr = "0 0"
+  let syntaxStr = "[ <bg-layer> , ]* <final-bg-layer>"
+  let valueStr = "var(--test)"
 
   
   # let syntaxStr = "<declaration-value>"

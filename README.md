@@ -1,16 +1,45 @@
 # css
-CSS parser with value validation.
+MDN-typed CSS validator with minimally hacked non-string DSL.
 
 
 ## Features
+- [X] Builder DSL
 - [X] MDN CSS data imported via JSON schema, created with `jsony_plus`
 - [X] Property Name/Value Validation
 - [X] `calc()` support
 - [ ] Rewrite lexer/parser/validator as single loop, currenttly three components
 - [ ] Userfriendly errors
-- [ ] Selectors
-- [ ] Dynamic Compilation/Contexts
+- [-] Selectors
+- [ ] Context awareness  (track variables)
 
+## Written DSL
+See [web](https://github.com/thing-king/web)
+```nim
+let doc = css:
+  !thisIsAClass:
+    color: red
+
+  !thisIsAClass[hover, active]:
+    opacity: 0.6
+  
+  [root]:
+    --some-thing: 50.px
+    --another-thing: {cvar(--some-thing), 20.px}
+
+echo $doc # ".thisIsAClass { color: red } .thisIsAClass:hover:active { opacity: 0.6 } :root { --some-thing: 50px; --another-thing: var(--some-thing), 20px }"
+```
+```nim
+var styles = newStyles()
+styles.add:
+  color: red
+  backgroundColor: blue
+
+  !aClass:  # this throws an error
+    margin: 0
+```
+
+## Validation
+All property values are validated at compile-time, unless their value is "not-pure" (dynamic), then they are validated at run-time.
 ```nim
 import pkg/css
 
@@ -59,7 +88,6 @@ Error: unhandled exception: Invalid value for object-fit:
 None of the alternatives matched [InvalidCSSValue]
 Error: execution of an external program failed: '/home/savant/css/bin/css'
 ```
-
 
 ```
 Testing: ./tests/data/bootstrap.css
