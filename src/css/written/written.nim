@@ -12,7 +12,7 @@ import ../core
 
 
 import pkg/lifter
-
+import pkg/jsony_plus/serialized_node
 
 
 
@@ -65,7 +65,7 @@ proc parseWrittenPropertyBody(syntax: string, body: NimNode): WrittenPropertyBod
         )
 
     
-    return WrittenPropertyBody(kind: pkMIXED, node: node)
+    return WrittenPropertyBody(kind: pkMIXED, node: node.toSerializedNode())
   else:
     # valueStr = valueStr.strip()
     # echo valueStr
@@ -175,7 +175,7 @@ proc parseWrittenRule(selectorStr: string, selectorNode: NimNode, body: NimNode)
     # error "Invalid CSS selector!\n" & errorStr, selectorNode
   
   let properties = parseWrittenRuleBody(body)
-  result = WrittenRule(selector: selectorStr, properties: properties, body: body)
+  result = WrittenRule(selector: selectorStr, properties: properties, body: body.toSerializedNode())
 
 
 proc parseWrittenDocument*(body: NimNode): WrittenDocument =
@@ -209,9 +209,16 @@ proc parseWrittenDocument*(body: NimNode): WrittenDocument =
 
   # echo body.treeRepr
   for node in body:
-    let isProperty = node.kind == nnkCall and node[0].kind in {nnkIdent, nnkStrLit} and node[1].kind == nnkStmtList and node[1].len == 1
+    var isProperty = node.kind == nnkCall and node[0].kind in {nnkIdent, nnkStrLit} and node[1].kind == nnkStmtList and node[1].len == 1
+    if isProperty and node[1].kind == nnkStmtList and node[1].len == 1 and node[1][0].kind == nnkCall:
+      isProperty = false # is something like `body: { backgroundColor: "" }`
+    
     # (node[1][0].kind != nnkCall and node[1][0].len != 2)
     var isInline = node.kind == nnkImportStmt
+
+
+    echo node.treeRepr
+    echo isProperty
 
     # echo "CSS HERE:"
     # echo node.treeRepr
@@ -241,5 +248,5 @@ proc parseWrittenDocument*(body: NimNode): WrittenDocument =
 genLift(WrittenDocument)
 macro css*(body: untyped): untyped =
   let document = parseWrittenDocument(body)
-  echo document
+  # echo document
   result = lift(document)

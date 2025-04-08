@@ -3,13 +3,19 @@ MDN-typed CSS validator with minimally hacked non-string DSL.
 
 
 ## Features
-- [X] Builder DSL
-- [X] MDN CSS data imported via JSON schema, created with `jsony_plus`
-- [X] Property Name/Value Validation
-- [X] `calc()` support
-- [ ] Rewrite lexer/parser/validator as single loop, currenttly three components
+- parses for syntax and values
+- syntax validator
+- typed styles object with assignment validation
+
+### Supported
+- [X] Properties
+- [X] AtRules
+- [X] Rules
+- [ ] Rule selectors
+
+### TODO
 - [ ] Userfriendly errors
-- [-] Selectors
+- [ ] Entire rewrite
 - [ ] Context awareness  (track variables)
 
 ## Written DSL

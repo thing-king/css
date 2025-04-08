@@ -30,7 +30,7 @@ import value_parser  # provides: let tokens: seq[ValueToken] = tokenizeValue("â€
 #   temp
 
 # Debug settings
-var DEBUG {.compileTime} = false
+var DEBUG {.compileTime} = true
 proc enableDebug*() = DEBUG = true
 proc disableDebug*() = DEBUG = false
 
@@ -145,15 +145,39 @@ proc validateBuiltinDataType(typeName: string, token: ValueToken, visitedPropert
   
   # Special handling for declaration-value
   if typeName == "declaration-value":
-    echo "ATTEMPTING DECL: "
-    echo token.treeRepr
-
     # If the token is a sequence, we need to validate all of its children
     if token.kind == vtkSequence:
       return validateDeclarationValue(token.children, visitedProperties)
     # Otherwise, treat single token as a sequence of one
     else:
       return validateDeclarationValue(@[token], visitedProperties)
+
+  # Special handling for declaration-list
+  if typeName == "declaration-list":
+    log("Validating declaration-list")
+    
+    # Case 1: For a sequence token (multiple properties)
+    if token.kind == vtkSequence:
+      log("Checking sequence of " & $token.children.len & " tokens for declaration-list")
+      
+      # All children must be properties
+      for child in token.children:
+        if child.kind != vtkProperty:
+          log("Invalid token in declaration-list: " & $child.kind & " (expected vtkProperty)")
+          return false
+      
+      # If we got here, all children are properties
+      return true
+    
+    # Case 2: For a single property token
+    elif token.kind == vtkProperty:
+      log("Found single property in declaration-list: " & token.value)
+      return true
+    
+    # Case 3: Neither a property nor a sequence of properties
+    else:
+      log("Token is not a property or sequence of properties: " & $token.kind)
+      return false
 
   case typeName
   of "number":       
@@ -219,7 +243,6 @@ proc validateCalcExpression(token: ValueToken, expectedType: string): bool =
         return true
         
   return false
-
 
 proc validateDataType(node: Node, tokens: seq[ValueToken], index: int, visitedProperties: var HashSet[string]): MatchResult {.gcsafe.} =
   ## Validates if tokens match a data type
@@ -380,8 +403,57 @@ proc validateDataType(node: Node, tokens: seq[ValueToken], index: int, visitedPr
       return MatchResult(success: false, index: index,
                         errors: @["Expected alpha-value, got " & token.value])
   
+  # Special handling for declaration-list
+  elif node.value == "declaration-list":
+    log("Special handling for declaration-list")
+    
+    # First check if this is a sequence of properties
+    if index < tokens.len:
+      # If the first token is a sequence, use the existing sequence handling
+      if tokens[index].kind == vtkSequence:
+        log("Found sequence token for declaration-list")
+        let innerTokens = tokens[index].children
+        
+        # Check if all children are properties
+        var allProperties = true
+        for child in innerTokens:
+          if child.kind != vtkProperty:
+            allProperties = false
+            log("Invalid token in declaration-list sequence: " & $child.kind)
+            break
+        
+        if allProperties:
+          log("All tokens in sequence are properties, valid declaration-list")
+          return MatchResult(success: true, index: index + 1, errors: @[])
+        else:
+          return MatchResult(success: false, index: index, 
+                          errors: @["Not all tokens in sequence are properties"])
+      else:
+        # Handle consecutive property tokens
+        var currentIndex = index
+        var foundProperty = false
+        
+        while currentIndex < tokens.len and tokens[currentIndex].kind == vtkProperty:
+          foundProperty = true
+          currentIndex += 1
+        
+        # Check if we've processed all tokens
+        if foundProperty and currentIndex == tokens.len:
+          log("Found " & $(currentIndex - index) & " consecutive property tokens")
+          return MatchResult(success: true, index: currentIndex, errors: @[])
+        # Check if we have remaining non-property tokens
+        elif foundProperty and currentIndex < tokens.len:
+          log("Found non-property token after properties at index " & $currentIndex)
+          return MatchResult(success: false, index: index,
+                          errors: @["Invalid token in declaration-list: " & $tokens[currentIndex].kind])
+        else:
+          return MatchResult(success: false, index: index,
+                          errors: @["Expected property token for declaration-list"])
+    else:
+      return MatchResult(success: false, index: index,
+                        errors: @["Expected declaration-list, reached end"])
   # Non-quantified data type
-  if syntaxes.hasKey(node.value):
+  elif syntaxes.hasKey(node.value):
     log("Using syntax definition for: " & node.value)
     let syntaxDef = syntaxes[node.value].syntax
     let subAst = parseSyntax(syntaxDef)
@@ -753,6 +825,81 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int, visitedProper
                       errors: @["Expected " & $node.kind & " but reached end"])
   
   case node.kind
+  of nkRule:
+    if index >= tokens.len:
+      return MatchResult(success: false, index: index,
+                      errors: @["Expected rule, reached end"])
+    
+    let token = tokens[index]
+    
+    # Check if the token is a rule
+    if token.kind != vtkRule:
+      return MatchResult(success: false, index: index,
+                      errors: @["Expected rule, got " & $token.kind & " '" & token.value & "'"])
+    
+    # Validation flags and errors
+    var hasValidChildren = true
+    var childErrors: seq[string] = @[]
+    
+    # For a rule, get the selector tokens
+    var selectorTokens: seq[ValueToken] = @[]
+    if token.value.len > 0:
+      # Tokenize the rule selector using the existing tokenizer
+      selectorTokens = tokenizeValue(token.value, wrapRoot=false)
+      log("Tokenized rule selector into " & $selectorTokens.len & " tokens")
+    elif token.children.len > 0:
+      # Use the child tokens directly
+      selectorTokens = token.children
+      log("Using " & $selectorTokens.len & " existing child tokens for selector")
+    
+    echo "Got selector tokens:"
+    echo $selectorTokens
+
+    # Check if the node requires parameters (selector)
+    if node.children.len > 0:
+      log("Validating rule selector tokens")
+      
+      # Validate the selector against the first child (which should be a comma list or other selector pattern)
+      let selectorResult = validateNode(node.children[0], selectorTokens, 0, visitedProperties)
+      
+      if not selectorResult.success:
+        hasValidChildren = false
+        childErrors.add("Invalid selector: " & selectorResult.errors.join(", "))
+      # If all selector tokens are not consumed, that's an error
+      elif selectorResult.index < selectorTokens.len:
+        hasValidChildren = false
+        childErrors.add("Extra unexpected tokens in selector at position " & $selectorResult.index)
+    
+    # Check for body validation
+    var hasValidBody = true
+    
+    # Use the dedicated body field for rules
+    if node.body.len > 0:
+      # The body validator is the first node in the body sequence
+      let bodyValidator = node.body[0]
+      log("Found body validator: " & $bodyValidator.kind & " '" & bodyValidator.value & "'")
+      
+      # Check if a body is required but missing
+      if token.body.len == 0:
+        hasValidBody = false
+        childErrors.add("Missing required body for rule")
+      # Validate the body content if present
+      elif token.body.len > 0:
+        log("Validating rule body with " & $token.body.len & " tokens")
+        for i, bodyToken in token.body:
+          log("  Body token " & $i & ": " & $bodyToken.kind & " '" & bodyToken.value & "'")
+        
+        let bodyResult = validateNode(bodyValidator, token.body, 0, visitedProperties)
+        if not bodyResult.success:
+          hasValidBody = false
+          childErrors.add("Invalid body content: " & bodyResult.errors.join(", "))
+    
+    # Return success if selector is valid and body is valid
+    if hasValidChildren and hasValidBody:
+      return MatchResult(success: true, index: index + 1, errors: @[])
+    else:
+      return MatchResult(success: false, index: index, errors: childErrors)
+
   of nkKeyword:
     if index >= tokens.len:
       return MatchResult(success: false, index: index,
@@ -769,6 +916,78 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int, visitedProper
     
     return MatchResult(success: true, index: index + 1, errors: @[])
   
+  of nkAtRule:
+    if index >= tokens.len:
+      return MatchResult(success: false, index: index,
+                        errors: @["Expected at-rule " & node.value & ", reached end"])
+    
+    let token = tokens[index]
+    
+    # Check if the token is an at-rule of the expected type
+    if token.kind != vtkAtRule or token.value != node.value:
+      return MatchResult(success: false, index: index,
+                        errors: @["Expected at-rule " & node.value & ", got " & $token.kind & " '" & token.value & "'"])
+    
+    # Validation flags and errors
+    var hasValidChildren = true
+    var childErrors: seq[string] = @[]
+    
+    # Check if the node requires parameters
+    if node.children.len > 0:
+      let paramValidator = node.children[0]
+      let isParamOptional = paramValidator.kind == nkOptional
+      
+      if not isParamOptional and token.children.len == 0:
+        hasValidChildren = false
+        childErrors.add("Missing required parameters for " & node.value)
+      elif token.children.len > 0:
+        # Validate the parameters that are present
+        log("Validating at-rule parameters")
+        let paramResult = validateNode(paramValidator, token.children, 0, visitedProperties)
+        
+        if not paramResult.success:
+          hasValidChildren = false
+          childErrors.add("Invalid parameters: " & paramResult.errors.join(", "))
+    
+    # Check for body validation
+    var hasValidBody = true
+    
+    # Use the dedicated body field for at-rules
+    if node.body.len > 0:
+      # The body validator is the first node in the body sequence
+      let bodyValidator = node.body[0]
+      log("Found body validator: " & $bodyValidator.kind & " '" & bodyValidator.value & "'")
+      
+      # Check if body is required
+      let isBodyRequired = bodyValidator.kind == nkRequired
+      
+      # Get the actual validator node if wrapped in required
+      let actualBodyValidator = if isBodyRequired and bodyValidator.children.len > 0:
+                                bodyValidator.children[0]
+                              else:
+                                bodyValidator
+      
+      # Check if a body is required but missing
+      if isBodyRequired and token.body.len == 0:
+        hasValidBody = false
+        childErrors.add("Missing required body for " & node.value)
+      # Validate the body content if present
+      elif token.body.len > 0:
+        log("Validating at-rule body with " & $token.body.len & " tokens")
+        for i, bodyToken in token.body:
+          log("  Body token " & $i & ": " & $bodyToken.kind & " '" & bodyToken.value & "'")
+        
+        let bodyResult = validateNode(actualBodyValidator, token.body, 0, visitedProperties)
+        if not bodyResult.success:
+          hasValidBody = false
+          childErrors.add("Invalid body content: " & bodyResult.errors.join(", "))
+    
+    # Return success if parameters are valid and body is valid (or not required)
+    if hasValidChildren and hasValidBody:
+      return MatchResult(success: true, index: index + 1, errors: @[])
+    else:
+      return MatchResult(success: false, index: index, errors: childErrors)
+
   of nkDataType:
     return validateDataType(node, tokens, index, visitedProperties)
   
@@ -916,6 +1135,23 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int, visitedProper
     return MatchResult(success: true, index: currentIndex, errors: @[])
   
   of nkCommaList:
+    # Handle the case where we have individual tokens without explicit commas
+    if node.children.len > 0 and tokens.len > 0 and 
+      not tokens.any(proc(t: ValueToken): bool = t.kind == vtkComma):
+      var allValid = true
+      var errors: seq[string] = @[]
+      
+      # Validate each token individually
+      for i, token in tokens:
+        let res = validateNode(node.children[0], @[token], 0, visitedProperties)
+        if not res.success:
+          allValid = false
+          errors.add("Item at position " & $i & " is invalid: " & res.errors.join(", "))
+      
+      if allValid:
+        return MatchResult(success: true, index: tokens.len, errors: @[])
+      else:
+        return MatchResult(success: false, index: index, errors: errors)
     if tokens.len > 0 and not tokens.any(proc(t: ValueToken): bool = t.kind == vtkComma):
       # Validate the entire sequence as a single item
       let res = validateNode(node.children[0], tokens, 0, visitedProperties)
@@ -1251,8 +1487,13 @@ proc validateCSSValue*(syntaxStr, valueStr: string): ValidatorResult {.gcsafe.} 
 when isMainModule:
   enableDebug()
 
-  let syntaxStr = "[ <bg-layer> , ]* <final-bg-layer>"
-  let valueStr = "var(--test)"
+  let syntaxStr = "@keyframes <keyframes-name> {\n  <keyframe-block-list>\n}"
+  let valueStr = "@keyframes 'sts' { from { left: 2px } }"
+  # let syntaxStr = "@keyframes <keyframes-name> {\n  <keyframe-block-list>\n}"
+  # let valueStr = "@keyframes 'test' { from { left: 5px } to { right: 2px } }"
+  # let syntaxStr = "@import [ <string> | <url> ]\n        [ layer | layer(<layer-name>) ]?\n        [ supports( [ <supports-condition> | <declaration> ] ) ]?\n        <media-query-list>? ;"
+  # let valueStr = "@import "
+
 
   
   # let syntaxStr = "<declaration-value>"

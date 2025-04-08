@@ -18,7 +18,11 @@ type
     tkSlash,        # / - separator
     tkQuantity,     # {m,n} - quantity specifier
     tkValueRange,   # [min,max] - value range
-    tkComma         # , - parameter separator in functions
+    tkComma,        # , - parameter separator in functions
+    tkAtRule,       # @keyword - CSS at-rule
+    tkBodyBlock,    # {...} - block of content
+    tkOpenBrace,    # { - opening brace
+    tkCloseBrace    # } - closing brace
 
   ValueRangeType* = object
     min*: string
@@ -266,6 +270,42 @@ proc checkModifiers(input: string, pos: var int): seq[TokenKind] {.gcsafe.} =
   return result.modifiers
 
 
+proc parseTokens(input: string, pos: var int, inFunctionGroup = false): seq[Token] {.gcsafe.}
+
+# Parse the body block content (everything between { and })
+proc parseBodyBlock(input: string, pos: var int): Token {.gcsafe.} =
+  var startPos = pos
+  if pos >= input.len or input[pos] != '{':
+    return Token(kind: tkBodyBlock, value: "", isSpecial: false)
+  
+  pos += 1 # Skip {
+  var braceCount = 1
+  var bodyContent = ""
+  
+  # Parse all content until we find the matching closing brace
+  while pos < input.len and braceCount > 0:
+    if input[pos] == '{':
+      braceCount += 1
+    elif input[pos] == '}':
+      braceCount -= 1
+      if braceCount == 0:
+        pos += 1  # Skip the closing brace
+        break
+    
+    if braceCount > 0:  # Only add to content if we haven't hit the matching closing brace
+      bodyContent.add(input[pos])
+      pos += 1
+  
+  # Parse the body content recursively to tokenize its contents
+  var contentPos = 0
+  let innerTokens = parseTokens(bodyContent, contentPos)
+  
+  return Token(
+    kind: tkBodyBlock,
+    value: bodyContent,
+    children: innerTokens,
+    isSpecial: false
+  )
 
 proc parseTokens(input: string, pos: var int, inFunctionGroup = false): seq[Token] {.gcsafe.} =
   var tokens: seq[Token] = @[]
@@ -280,6 +320,35 @@ proc parseTokens(input: string, pos: var int, inFunctionGroup = false): seq[Toke
       pos += 1 # Skip the comma
       tokens.add(Token(kind: tkComma, value: ",", isSpecial: false))
       continue
+    
+    # Handle @ for at-rules
+    if input[pos] == '@':
+      pos += 1 # Skip @
+      skipWhitespace(input, pos)
+      
+      # Parse the at-rule keyword that follows the @ symbol
+      let atRuleKeyword = parseKeyword(input, pos)
+      if atRuleKeyword != "":
+        tokens.add(Token(kind: tkAtRule, value: atRuleKeyword, isSpecial: false))
+      else:
+        # Invalid at-rule (@ without keyword)
+        # Just add a generic at-rule token and continue
+        tokens.add(Token(kind: tkAtRule, value: "", isSpecial: false))
+      
+      continue
+    
+    # Handle opening brace - for body blocks
+    if input[pos] == '{':
+      # Generate a body block token
+      let bodyBlock = parseBodyBlock(input, pos)
+      tokens.add(bodyBlock)
+      continue
+    
+    # Handle closing brace - should be handled by parseBodyBlock
+    if input[pos] == '}':
+      pos += 1 # Skip }
+      continue
+    
     # Data Type
     if input[pos] == '<':
       let dataType = strutils.strip(parseDataType(input, pos))
@@ -519,6 +588,14 @@ proc `$`(token: Token): string =
       base = "ValueRange"
     of tkComma:
       base = "Comma(,)"
+    of tkAtRule:
+      base = "AtRule(@" & token.value & ")"
+    of tkBodyBlock:
+      base = "BodyBlock{" & token.children.mapIt($it).join(" ") & "}"
+    of tkOpenBrace:
+      base = "OpenBrace({)"
+    of tkCloseBrace:
+      base = "CloseBrace(})"
   
   # Add special information if any
   if token.isSpecial:
@@ -558,7 +635,13 @@ proc `$`(token: Token): string =
 when isMainModule:
   # Test the enhanced CSS syntax parser
   block:
-    let syntax1 = "[ [ left | center | right | top | bottom | <length-percentage> ] | [ left | center | right | <length-percentage> ] [ top | center | bottom | <length-percentage> ] | [ center | [ left | right ] <length-percentage>? ] && [ center | [ top | bottom ] <length-percentage>? ] ]"
+    let syntax1 = "@font-feature-values <family-name># {\n  <feature-value-block-list>\n}"
     let tokens1 = tokenizeSyntax(syntax1)
     echo "Parsed syntax: ", syntax1
     echo tokens1
+    
+    # Test with more complex at-rule syntax
+    let syntax2 = "@starting-style {\n  <declaration-list> | <group-rule-body>\n}"
+    let tokens2 = tokenizeSyntax(syntax2)
+    echo "\nParsed syntax: ", syntax2
+    echo tokens2

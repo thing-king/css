@@ -1,3 +1,5 @@
+import pkg/jsony_plus/serialized_node
+
 type
   WrittenPropertyKind* = enum
     pkPURE
@@ -8,7 +10,7 @@ type
     of pkPURE:
       value*: string
     of pkMIXED:
-      node*: NimNode
+      node*: SerializedNode
 
   WrittenProperty* = object
     name*: string
@@ -17,7 +19,7 @@ type
   WrittenRule* = object
     selector*: string
     properties*: seq[WrittenProperty]
-    body*: NimNode
+    body*: SerializedNode
 
 
 type

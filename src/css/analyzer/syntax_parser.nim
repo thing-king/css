@@ -20,10 +20,16 @@ type
     nkRequired,     # A! required node
     nkQuantified,   # A{m,n} quantity specified node
     nkValueRange,   # A[min,max] value range
-    nkSeparator     # Special separator like slash (/)
+    nkSeparator,    # Special separator like slash (/)
+    nkAtRule,       # At-rule (e.g. @media)
+    nkRule          # Rule (e.g. something { ... })
 
   Node* = ref object
-    kind*: NodeKind
+    case kind*: NodeKind
+    of nkAtRule, nkRule:
+      body*: seq[Node]  # Body block for at-rules
+    else:
+      discard
     value*: string  # For data types, keywords, etc.
     children*: seq[Node]
     case isQuantified*: bool
@@ -545,6 +551,65 @@ proc processTokensToNodes(tokens: seq[Token], isTopLevel: bool = true, inFunctio
     result.add(funcNode)
     return
 
+  # check for rules
+  if tokens.len > 1 and tokens[tokens.len - 1].kind == tkBodyBlock:
+    # Check if it's not an at-rule (which was already handled)
+    if tokens[0].kind != tkAtRule:
+      var ruleNode = newNode(nkRule, "")
+      var selectors = tokens[0..tokens.len - 2]
+      var selectorNodes = processTokensToNodes(selectors, false, inFunction)
+      if selectorNodes.len == 1:
+        ruleNode.children.add(selectorNodes[0])
+      else:
+        var seqNode = newNode(nkSequence)
+        seqNode.children = selectorNodes
+        ruleNode.children.add(seqNode)
+
+      # parse bodyblock's children
+      var bodyBlockTokens = tokens[tokens.len - 1].children
+      var bodyBlockNode = newNode(nkSequence)
+      var bodyBlockChildren = processTokensToNodes(bodyBlockTokens, false, inFunction)
+      if bodyBlockChildren.len == 1:
+        bodyBlockNode.children.add(bodyBlockChildren[0])
+      else:
+        var seqNode = newNode(nkSequence)
+        seqNode.children = bodyBlockChildren
+        bodyBlockNode.children.add(seqNode)
+      ruleNode.body.add(bodyBlockNode)
+      result.add(ruleNode)
+      return
+
+  # 1.5) Check for atrule
+  if tokens.len > 1 and tokens[0].kind == tkAtRule:
+    var atRuleNode = newNode(nkAtRule, tokens[0].value)
+    var hasBody = tokens[tokens.len - 1].kind == tkBodyBlock
+    var selectors: seq[Token] = @[]
+    if hasBody:
+      selectors = tokens[1..tokens.len - 2]
+    else:
+      selectors = tokens[1..tokens.len - 1]
+    var selectorNodes = processTokensToNodes(selectors, false, inFunction)
+    if selectorNodes.len == 1:
+      atRuleNode.children.add(selectorNodes[0])
+    else:
+      var seqNode = newNode(nkSequence)
+      seqNode.children = selectorNodes
+      atRuleNode.children.add(seqNode)
+    if hasBody:
+      # parse bodyblock's children
+      var bodyBlockTokens = tokens[tokens.len - 1].children
+      var bodyBlockNode = newNode(nkSequence)
+      var bodyBlockChildren = processTokensToNodes(bodyBlockTokens, false, inFunction)
+      if bodyBlockChildren.len == 1:
+        bodyBlockNode.children.add(bodyBlockChildren[0])
+      else:
+        var seqNode = newNode(nkSequence)
+        seqNode.children = bodyBlockChildren
+        bodyBlockNode.children.add(seqNode)
+      atRuleNode.body.add(bodyBlockNode)
+    result.add(atRuleNode)
+    return
+
   # 2) Check for tkOrList (the double-pipe "||")
   var hasOrList = false
   for token in tokens:
@@ -792,6 +857,18 @@ proc simplifyAST*(node: Node): Node =
 
 proc `$`*(node: Node): string =
   case node.kind:
+    of nkAtRule:
+      result = "@" & node.value
+      if node.body.len > 0:
+        result &= " {\n" & node.body.mapIt($it).join("\n") & "\n}"
+    of nkRule:
+      # Similar to AtRule but without the @ symbol
+      if node.children.len > 0:
+        result = $node.children[0]
+      else:
+        result = ""
+      if node.body.len > 0:
+        result &= " {\n" & node.body.mapIt($it).join("\n") & "\n}"
     of nkFunction:
       var params = node.children.mapIt($it).join(", ")
       result = node.value & "(" & params & ")"
@@ -902,6 +979,14 @@ proc treeRepr*(node: Node, indent = 0): string =
   # Print the AST in a tree-like format
   var nodeInfo = $node.kind
   case node.kind:
+    of nkAtRule:
+      nodeInfo &= " @" & node.value
+      if node.body.len > 0:
+        nodeInfo &= " {\n" & node.body.mapIt($it.treeRepr(indent + 2)).join("\n") & "\n}"
+    of nkRule:
+      # nodeInfo &= ""
+      if node.body.len > 0:
+        nodeInfo &= " {\n" & node.body.mapIt($it.treeRepr(indent + 2)).join("\n") & "\n}"
     of nkFunction:
       nodeInfo &= "(" & node.value & ")"
     of nkDataType, nkKeyword, nkSeparator:
@@ -935,6 +1020,19 @@ proc treeRepr*(node: Node, indent = 0): string =
 
 proc parseSyntax*(syntaxStr: string): Node {.gcsafe.} =
   let tokens = tokenizeSyntax(syntaxStr)
+
+  for i, token in tokens:
+    if token.kind == tkAtRule and i != 0:
+      # If we have an at-rule, it should be the first token
+      raise newException(ValueError, "At-rule must be the first token in the syntax string.")
+    if token.kind == tkBodyBlock:
+      if i != tokens.len - 1:
+        # If we have a body block, it should be the last token
+        raise newException(ValueError, "Body block must be the last token in the syntax string.")
+      # elif tokens[0].kind != tkAtRule:
+      #   # If we have a body block, it should be preceded by an at-rule
+      #   raise newException(ValueError, "Body block must be preceded by an at-rule.")
+
   let ast = tokensToAST(tokens)
   return simplifyAST(ast)
 
@@ -960,7 +1058,11 @@ when isMainModule:
   # let syntax1 = "hwb( [<hue> | none] [<percentage> | none] [<percentage> | none] [ / [<alpha-value> | none] ]?)"
   test("[ [ left | center | right | top | bottom | <length-percentage> ] | [ left | center | right | <length-percentage> ] [ top | center | bottom | <length-percentage> ] | [ center | [ left | right ] <length-percentage>? ] && [ center | [ top | bottom ] <length-percentage>? ] ]")
   test("rgba( <percentage>{3} [ / <alpha-value> ]? ) | rgba( <number>{3} [ / <alpha-value> ]? ) | rgba( <percentage>#{3} , <alpha-value>? ) | rgba( <number>#{3} , <alpha-value>? )")
+  
+  test("@font-feature-values <family-name># {\n  <feature-value-block-list>\n}")
+  test("@media <media-query> {\n  <rule-list>\n}")
 
+  test("<keyframe-selector># {\n  <declaration-list>\n}")
   # echo "\n--------------------------\n"
   
   # let syntax2 = "<color> | <image># | <url>"
