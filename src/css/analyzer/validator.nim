@@ -6,6 +6,7 @@ import pkg/colors
 
 # this
 import ../types
+import ../util
 import ../imports/imports   # gives access to `syntaxes` and `functions`
 export imports
 import syntax_parser # provides: let ast: Node = parseSyntax("…")
@@ -34,17 +35,6 @@ var DEBUG {.compileTime} = true
 proc enableDebug*() = DEBUG = true
 proc disableDebug*() = DEBUG = false
 
-const REPLACEMENTS = @[
-  ("-webkit-match-parent", "match-parent"),
-  ("currentcolor", "currentColor"),
-  ("-webkit-max-content", "max-content"),
-  ("-webkit-min-content", "min-content"),
-  ("-moz-max-content", "max-content"),
-  ("-moz-min-content", "min-content"),
-  ("RGBA(", "rgba("),
-  ("RGB(", "rgb("),
-  ("-webkit-sticky", "sticky"),
-].toTable
 
 proc log(msg: string) =
   when defined(js):
@@ -1392,7 +1382,7 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int, visitedProper
 # PUBLIC API
 #---------------------------------------------------------
 
-proc validateCSSValue*(syntaxStr, valueStr: string): ValidatorResult {.gcsafe.} =
+proc validate*(syntaxStr: string, tokens: seq[ValueToken]): ValidatorResult {.gcsafe.} =
   ## Validates a CSS value against a syntax definition
   
   # Initialize visited properties set to prevent circular references
@@ -1400,14 +1390,6 @@ proc validateCSSValue*(syntaxStr, valueStr: string): ValidatorResult {.gcsafe.} 
   
   # Parse syntax and value
   let ast = parseSyntax(syntaxStr)
-
-
-  var replacedStr = valueStr
-  for replacementFrom, replacementTo in REPLACEMENTS:
-    if replacedStr.contains(replacementFrom):
-      replacedStr = replacedStr.replace(replacementFrom, replacementTo)
-
-  var tokens = tokenizeValue(replacedStr)
   
   log "Syntax AST:"
   log ast.treeRepr
@@ -1449,7 +1431,7 @@ proc validateCSSValue*(syntaxStr, valueStr: string): ValidatorResult {.gcsafe.} 
         break
   if isVar:
     log "A token is a var() function"
-    return ValidatorResult(valid: true, errors: @[])
+    return ValidatorResult(true)
 
 
 
@@ -1469,18 +1451,28 @@ proc validateCSSValue*(syntaxStr, valueStr: string): ValidatorResult {.gcsafe.} 
     if result.index < effectiveTokens.len:
       if hasOnlyImportant(effectiveTokens, result.index):
         # Valid: the only remaining token is !important at the end
-        return ValidatorResult(valid: true, errors: @[])
+        return ValidatorResult(true)
       else:
         # Invalid: there are extra tokens that aren't just a trailing !important
         var errors = result.errors
         errors.add("Extra tokens at index " & $result.index)
-        return ValidatorResult(valid: false, errors: errors)
+        return ValidatorResult(false, errors)
     else:
       # All tokens consumed successfully
-      return ValidatorResult(valid: true, errors: @[])
+      return ValidatorResult(true)
   else:
     # Validation failed
-    return ValidatorResult(valid: false, errors: result.errors)
+    return ValidatorResult(false, result.errors)
+
+proc validate*(syntaxStr, valueStr: string): ValidatorResult {.gcsafe.} =
+  ## Validates a CSS value against a syntax definition
+  
+  # Parse the value string into tokens
+  let tokens = tokenizeValue(valueStr)
+  
+  # Call the main validation function
+  return validate(syntaxStr, tokens)
+
 
 
 # Example usage when run as main program
@@ -1500,10 +1492,10 @@ when isMainModule:
   # let valueStr  = "dasdsa dasds"
 
 
-  let result = validateCSSValue(syntaxStr, valueStr)
+  let result = validate(syntaxStr, valueStr)
   if result.valid:
     echo "Valid: ", ($result.valid).green
   else:
     echo "Invalid: ", ($result.valid).red
     for err in result.errors:
-      echo " - " & err
+      echo " - " & $err

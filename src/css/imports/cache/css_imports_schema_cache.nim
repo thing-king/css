@@ -2,25 +2,25 @@ import tables
 
 ## AtRule
 
-# type
-#   AtRuleDefinitionsStringOrPropertyListVariant0* = string
-# type
-#   AtRuleDefinitionsStringOrPropertyListVariant1* = seq[string]
-# type
-#   AtRuleDefinitionsStringOrPropertyListKind* = enum
-#     Variant0, Variant1
-# type
-#   AtRuleDefinitionsStringOrPropertyList* = object
-#     case kind*: AtRuleDefinitionsStringOrPropertyListKind
-#     of Variant0:
-#         value0*: AtRuleDefinitionsStringOrPropertyListVariant0
+type
+  AtRuleDefinitionsStringOrPropertyListVariant0* = string
+type
+  AtRuleDefinitionsStringOrPropertyListVariant1* = seq[string]
+type
+  AtRuleDefinitionsStringOrPropertyListKind* = enum
+    Variant0, Variant1
+type
+  AtRuleDefinitionsStringOrPropertyList* = object
+    case kind*: AtRuleDefinitionsStringOrPropertyListKind
+    of Variant0:
+        value0*: AtRuleDefinitionsStringOrPropertyListVariant0
 
-#     of Variant1:
-#         value1*: AtRuleDefinitionsStringOrPropertyListVariant1
+    of Variant1:
+        value1*: AtRuleDefinitionsStringOrPropertyListVariant1
 
   
-# type
-#   AtRuleValueInterfaces* = seq[string]
+type
+  AtRuleValueInterfaces* = seq[string]
 type
   definitionsGroupList* = enum
     dglBASIC_SELECTORS, dglCOMBINATORS, dglCOMPOSITING_AND_BLENDING,
@@ -45,63 +45,63 @@ type
     dglMEDIA_QUERIES, dglMICROSOFT_EXTENSIONS, dglMOZILLA_EXTENSIONS,
     dglPOINTER_EVENTS, dglPSEUDO, dglPSEUDO_CLASSES, dglPSEUDO_ELEMENTS,
     dglSELECTORS, dglSCALABLE_VECTOR_GRAPHICS, dglWEB_KIT_EXTENSIONS
-# type
-#   AtRuleValueGroups* = seq[definitionsGroupList]
-# type
-#   AtRuleValueDescriptorsValueMediaVariant0* = enum
-#     arvdvmvALL, arvdvmvCONTINUOUS, arvdvmvPAGED, arvdvmvVISUAL
-# type
-#   AtRuleValueDescriptorsValueMediaVariant1Item* = enum
-#     arvdvmviCONTINUOUS, arvdvmviPAGED, arvdvmviVISUAL
-# type
-#   AtRuleValueDescriptorsValueMediaVariant1* = seq[
-#       AtRuleValueDescriptorsValueMediaVariant1Item]
-# type
-#   AtRuleValueDescriptorsValueMediaKind* = enum
-#     Variant0, Variant1
-# type
-#   AtRuleValueDescriptorsValueMedia* = object
-#     case kind*: AtRuleValueDescriptorsValueMediaKind
-#     of Variant0:
-#         value0*: AtRuleValueDescriptorsValueMediaVariant0
+type
+  AtRuleValueGroups* = seq[definitionsGroupList]
+type
+  AtRuleValueDescriptorsValueMediaVariant0* = enum
+    arvdvmvALL, arvdvmvCONTINUOUS, arvdvmvPAGED, arvdvmvVISUAL
+type
+  AtRuleValueDescriptorsValueMediaVariant1Item* = enum
+    arvdvmviCONTINUOUS, arvdvmviPAGED, arvdvmviVISUAL
+type
+  AtRuleValueDescriptorsValueMediaVariant1* = seq[
+      AtRuleValueDescriptorsValueMediaVariant1Item]
+type
+  AtRuleValueDescriptorsValueMediaKind* = enum
+    Variant0, Variant1
+type
+  AtRuleValueDescriptorsValueMedia* = object
+    case kind*: AtRuleValueDescriptorsValueMediaKind
+    of Variant0:
+        value0*: AtRuleValueDescriptorsValueMediaVariant0
 
-#     of Variant1:
-#         value1*: AtRuleValueDescriptorsValueMediaVariant1
+    of Variant1:
+        value1*: AtRuleValueDescriptorsValueMediaVariant1
 
   
-# type
-#   AtRuleValueDescriptorsValueOrder* = enum
-#     arvdvoORDER_OF_APPEARANCE, arvdvoUNIQUE_ORDER
-# type
-#   AtRuleValueDescriptorsValueStatus* = enum
-#     arvdvsSTANDARD, arvdvsNONSTANDARD, arvdvsEXPERIMENTAL, arvdvsOBSOLETE
-# type
-#   AtRuleValueDescriptorsValue* = object
-#     syntax*: string
-#     media*: AtRuleValueDescriptorsValueMedia
-#     initial*: AtRuleDefinitionsStringOrPropertyList
-#     percentages*: AtRuleDefinitionsStringOrPropertyList
-#     computed*: AtRuleDefinitionsStringOrPropertyList
-#     order*: AtRuleValueDescriptorsValueOrder
-#     status*: AtRuleValueDescriptorsValueStatus
-#     mdn_url*: string
+type
+  AtRuleValueDescriptorsValueOrder* = enum
+    arvdvoORDER_OF_APPEARANCE, arvdvoUNIQUE_ORDER
+type
+  AtRuleValueDescriptorsValueStatus* = enum
+    arvdvsSTANDARD, arvdvsNONSTANDARD, arvdvsEXPERIMENTAL, arvdvsOBSOLETE
+type
+  AtRuleValueDescriptorsValue* = object
+    syntax*: string
+    media*: AtRuleValueDescriptorsValueMedia
+    initial*: AtRuleDefinitionsStringOrPropertyList
+    percentages*: AtRuleDefinitionsStringOrPropertyList
+    computed*: AtRuleDefinitionsStringOrPropertyList
+    order*: AtRuleValueDescriptorsValueOrder
+    status*: AtRuleValueDescriptorsValueStatus
+    mdn_url*: string
 
-# type
-#   AtRuleValueDescriptors* = Table[string, AtRuleValueDescriptorsValue]
-# type
-#   AtRuleValueStatus* = enum
-#     arvsSTANDARD, arvsNONSTANDARD, arvsEXPERIMENTAL, arvsOBSOLETE
-# type
-#   AtRuleValue* = object
-#     syntax*: string
-#     interfaces*: AtRuleValueInterfaces
-#     groups*: AtRuleValueGroups
-#     descriptors*: AtRuleValueDescriptors
-#     status*: AtRuleValueStatus
-#     mdn_url*: string
+type
+  AtRuleValueDescriptors* = Table[string, AtRuleValueDescriptorsValue]
+type
+  AtRuleValueStatus* = enum
+    arvsSTANDARD, arvsNONSTANDARD, arvsEXPERIMENTAL, arvsOBSOLETE
+type
+  AtRuleValue* = object
+    syntax*: string
+    interfaces*: AtRuleValueInterfaces
+    groups*: AtRuleValueGroups
+    descriptors*: AtRuleValueDescriptors
+    status*: AtRuleValueStatus
+    mdn_url*: string
 
-# type
-#   AtRule* = Table[string, AtRuleValue]
+type
+  AtRule* = Table[string, AtRuleValue]
 # proc enumHook*(s: string; v: var definitionsGroupList) =
 #   var definitionsGroupListTable: Table[string, definitionsGroupList] = initTable[
 #       string, definitionsGroupList]()

@@ -93,6 +93,8 @@ const functions* = importCSSAndModify functions:
 # const units* = importCSS units
 const selectors* = importCSS selectors
 
+const atRules* = importCSS atRules
+
 const units* = @[
   "cap",
   "ch",

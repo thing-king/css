@@ -3,6 +3,18 @@ import strutils
 import types
 import imports/imports
 
+proc ValidatorResult*(valid: bool, errors: seq[string] = @[]): ValidatorResult =
+  result.valid = valid
+  var realErrors: seq[Error] = @[]
+  if not valid:
+    for error in errors:
+      var err: Error
+      err.message = error
+      err.line = 0
+      err.column = 0
+      realErrors.add(err)
+  result.errors = realErrors
+
 proc kebabToCamelCase*(s: string): string =
   ## Converts a kebab-case string to camelCase
   ## Example: "-webkit-line-clamp" -> "webkitLineClamp"
@@ -37,11 +49,11 @@ proc toKebabCase*(s: string): string =
       result.add(s[i])
 
 
-proc singleIssue*(valid: bool, error: string): ValidatorResult =
-  var errors: seq[string] = @[]
-  if not valid:
-    errors.add(error)
-  return ValidatorResult(valid: valid, errors: errors)
+# proc singleIssue*(valid: bool, error: string): ValidatorResult =
+#   var errors: seq[string] = @[]
+#   if not valid:
+#     errors.add(error)
+#   return ValidatorResult(valid: valid, errors: errors)
 
 proc replaceUnits*(input: string): string =
   var unitsSeq = @["%"]

@@ -1,22 +1,22 @@
 # css
-MDN-typed CSS validator with minimally hacked non-string DSL.
+MDN-typed CSS validator (**linter**) with minimally hacked non-string DSL.
 
 
 ## Features
-- parses for syntax and values
-- syntax validator
+- parses syntax and values
+- validates values against syntax
 - typed styles object with assignment validation
 
 ### Supported
 - [X] Properties
 - [X] AtRules
 - [X] Rules
-- [ ] Rule selectors
+- [ ] Rule selectors (.class, tag, etc)
 
-### TODO
+### Coming soon
 - [ ] Userfriendly errors
-- [ ] Entire rewrite
-- [ ] Context awareness  (track variables)
+- [ ] Performance rewrite
+- [ ] Dynamic context awareness  (i.e. track variables)
 
 ## Written DSL
 See [web](https://github.com/thing-king/web)
@@ -44,19 +44,18 @@ styles.add:
     margin: 0
 ```
 
-## Validation
-All property values are validated at compile-time, unless their value is "not-pure" (dynamic), then they are validated at run-time.
+## Individual Validation
 ```nim
 import pkg/css
 
 # Validate property names
-echo isValidPropertyName("not valid!").valid                      # false
+echo validatePropertyName("not valid!").valid                      # false
 
 # Validate property values against a name
-echo isValidPropertyValue("background-color", "magenta").valid    # true
-echo isValidPropertyValue("backgsdound-color", "magenta").valid   # false
-echo isValidPropertyValue("backgsdound-color", "magenta").errors  # @[ "backgsdound-color is not a valid property name" ]
-echo isValidPropertyValue("margin", "20").errors                  # @[ "Expected length, got integer" ]
+echo validatePropertyValue("background-color", "magenta").valid    # true
+echo validatePropertyValue("backgsdound-color", "magenta").valid   # false
+echo validatePropertyValue("backgsdound-color", "magenta").errors  # @[ "backgsdound-color is not a valid property name" ]
+echo validatePropertyValue("margin", "20").errors                  # @[ "Expected length, got integer" ]
 
 # Directly access MDN CSS data
 echo functions["abs()"].status                                    # "standard"
@@ -64,7 +63,28 @@ echo properties["flex-direction"].inherited                       # false
 echo syntaxes["frequency-percentage"].syntax                      # "<frequency> | <percentage>"
 ```
 
+## Generic Validation
+Validate generic css-strings
+```nim
+echo validateCSS("""
+@keyframes 'test' {
+  from {
+    color: red;
+  }
+}
 
+asdasd
+
+test: 5px
+""", allowProperties = false,  # allow properties are root level
+     allowRules      = true    # allow rules
+)
+
+# (valid: false, errors: @[(message: "Invalid token kind: vtkIdent", line: 7, column: 1), (message: "Property not allowed at root level", line: 9, column: 1)])
+```
+
+## Styles Object
+`Styles` is a typed object, assignment is validated at compile-time if static, or run-time if dynamic.
 ```nim
 import pkg/css
 
