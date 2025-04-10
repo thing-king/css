@@ -22,7 +22,10 @@ type
     nkValueRange,   # A[min,max] value range
     nkSeparator,    # Special separator like slash (/)
     nkAtRule,       # At-rule (e.g. @media)
-    nkRule          # Rule (e.g. something { ... })
+    nkRule,         # Rule (e.g. something { ... })
+    nkChar,         # Character literal in single quotes
+    nkProperty,     # Property (name: value) pair
+    nkParen,        # Parentheses for grouping
 
   Node* = ref object
     case kind*: NodeKind
@@ -143,6 +146,58 @@ proc processFunctionParams(tokens: seq[Token]): seq[Node] {.gcsafe.} =
 
 proc processToken(token: Token): Node {.gcsafe.} =
   case token.kind:
+    of tkChar:
+      var charNode: Node
+      if token.isSpecial and (token.quantity.min != 0 or token.quantity.max.isSome):
+        charNode = newQuantifiedNode(
+          nkChar, 
+          token.value, 
+          token.quantity.min, 
+          token.quantity.max
+        )
+      else:
+        charNode = newNode(nkChar, token.value)
+      
+      # Apply modifiers if any
+      result = charNode
+      
+      # Check for explicit optional modifier
+      var hasOptional = false
+      for modifier in token.modifiers:
+        if modifier == tkSingleOptional:
+          hasOptional = true
+          break
+      
+      if hasOptional:
+        var optNode = newNode(nkOptional)
+        optNode.children.add(result)
+        result = optNode
+      
+      # Apply other modifiers
+      for modifier in token.modifiers:
+        if modifier == tkSingleOptional:
+          # Already handled
+          discard
+        else:
+          case modifier:
+            of tkZeroOrMore:
+              var zeroOrMoreNode = newNode(nkZeroOrMore)
+              zeroOrMoreNode.children.add(result)
+              result = zeroOrMoreNode
+            of tkCommaList:
+              var commaListNode = newNode(nkCommaList)
+              commaListNode.children.add(result)
+              result = commaListNode
+            of tkSpaceList:
+              var spaceListNode = newNode(nkOneOrMore)
+              spaceListNode.children.add(result)
+              result = spaceListNode
+            of tkRequired:
+              var requiredNode = newNode(nkRequired)
+              requiredNode.children.add(result)
+              result = requiredNode
+            else:
+              discard
     of tkDataType:
       var dataNode: Node
       if token.isSpecial:
@@ -405,7 +460,7 @@ proc processToken(token: Token): Node {.gcsafe.} =
             discard
 
     of tkParenGroup:
-      # For ParenGroup (function parameters), we process similarly to Group
+      # For ParenGroup, process similarly to Group but create an nkParen node
       var innerNodes = processTokensToNodes(token.children, false, true)
       
       var contentNode: Node
@@ -417,8 +472,10 @@ proc processToken(token: Token): Node {.gcsafe.} =
       else:
         contentNode = newNode(nkSequence)  # Empty sequence
       
-      # ParenGroups are not optional by default
-      var baseNode = contentNode
+      # Create an nkParen node to represent the parenthesized group
+      var parenNode = newNode(nkParen)
+      parenNode.children.add(contentNode)
+      var baseNode = parenNode
       
       # Check for tkSingleOptional in modifiers
       var isOptional = false
@@ -483,6 +540,7 @@ proc processToken(token: Token): Node {.gcsafe.} =
       # Default fallback for other token types
       result = newNode(nkSequence)
 
+
 proc processTokensToNodes(tokens: seq[Token], isTopLevel: bool = true, inFunction: bool = false): seq[Node] {.gcsafe.} =
   result = @[]
   if tokens.len == 0:
@@ -542,6 +600,23 @@ proc processTokensToNodes(tokens: seq[Token], isTopLevel: bool = true, inFunctio
       result.add(choiceNode)
       return
   
+  if tokens.len >= 3:
+    var i = 0
+    while i < tokens.len - 2:
+      if tokens[i+1].kind == tkColon:
+        # We found a potential property pattern
+        let leftNode = processToken(tokens[i])
+        let rightNode = processToken(tokens[i+2])
+        
+        var propertyNode = newNode(nkProperty, "")
+        propertyNode.children.add(leftNode)
+        propertyNode.children.add(rightNode)
+        
+        # Skip these tokens and add the property node
+        result.add(propertyNode)
+        return
+      i += 1
+
   # The rest of the original function continues as before...
   # 1) Special check for function syntax patterns (e.g. foo(...))
   if tokens.len >= 2 and tokens[0].kind == tkKeyword and tokens[1].kind == tkParenGroup:
@@ -764,6 +839,13 @@ proc simplifyAST*(node: Node): Node =
     node.children[i] = simplifyAST(node.children[i])
   
   case node.kind:
+    of nkParen:
+      # For parenthesized groups, we want to keep the structure
+      # but still simplify its child if it's a single child
+      if node.children.len == 1:
+        result = node
+      else:
+        result = node
     of nkFunction:
       # For functions, we want to keep the structure clean
       result = node
@@ -857,6 +939,24 @@ proc simplifyAST*(node: Node): Node =
 
 proc `$`*(node: Node): string =
   case node.kind:
+    of nkParen:
+      result = "(" & node.children.mapIt($it).join(" ") & ")"
+    of nkChar:
+      result = "'" & node.value & "'"
+      if node.isQuantified:
+        result &= "{" & $node.min
+        if node.max.isSome:
+          if node.max.get != node.min:
+            result &= "," & $node.max.get
+        else:
+          result &= ",∞"
+        result &= "}"
+    
+    of nkProperty:
+      if node.children.len >= 2:
+        result = $node.children[0] & " : " & $node.children[1]
+      else:
+        result = "property(?)"
     of nkAtRule:
       result = "@" & node.value
       if node.body.len > 0:
@@ -979,6 +1079,17 @@ proc treeRepr*(node: Node, indent = 0): string =
   # Print the AST in a tree-like format
   var nodeInfo = $node.kind
   case node.kind:
+    of nkChar:
+      nodeInfo &= "('" & node.value & "')"
+      if node.isQuantified:
+        nodeInfo &= " Quantity: {" & $node.min
+        if node.max.isSome:
+          nodeInfo &= "," & $node.max.get
+        else:
+          nodeInfo &= ",∞"
+        nodeInfo &= "}"
+    of nkProperty:
+      nodeInfo &= " (Property)"
     of nkAtRule:
       nodeInfo &= " @" & node.value
       if node.body.len > 0:
@@ -1022,9 +1133,9 @@ proc parseSyntax*(syntaxStr: string): Node {.gcsafe.} =
   let tokens = tokenizeSyntax(syntaxStr)
 
   for i, token in tokens:
-    if token.kind == tkAtRule and i != 0:
+    # if token.kind == tkAtRule and i != 0:
       # If we have an at-rule, it should be the first token
-      raise newException(ValueError, "At-rule must be the first token in the syntax string.")
+      # raise newException(ValueError, "At-rule must be the first token in the syntax string. " & syntaxStr)
     if token.kind == tkBodyBlock:
       if i != tokens.len - 1:
         # If we have a body block, it should be the last token
@@ -1056,13 +1167,18 @@ when isMainModule:
   # snapInterval( <length-percentage>, <length-percentage> ) | snapList( <length-percentage># )
 
   # let syntax1 = "hwb( [<hue> | none] [<percentage> | none] [<percentage> | none] [ / [<alpha-value> | none] ]?)"
-  test("[ [ left | center | right | top | bottom | <length-percentage> ] | [ left | center | right | <length-percentage> ] [ top | center | bottom | <length-percentage> ] | [ center | [ left | right ] <length-percentage>? ] && [ center | [ top | bottom ] <length-percentage>? ] ]")
-  test("rgba( <percentage>{3} [ / <alpha-value> ]? ) | rgba( <number>{3} [ / <alpha-value> ]? ) | rgba( <percentage>#{3} , <alpha-value>? ) | rgba( <number>#{3} , <alpha-value>? )")
+  # test("[ [ left | center | right | top | bottom | <length-percentage> ] | [ left | center | right | <length-percentage> ] [ top | center | bottom | <length-percentage> ] | [ center | [ left | right ] <length-percentage>? ] && [ center | [ top | bottom ] <length-percentage>? ] ]")
+  # test("rgba( <percentage>{3} [ / <alpha-value> ]? ) | rgba( <number>{3} [ / <alpha-value> ]? ) | rgba( <percentage>#{3} , <alpha-value>? ) | rgba( <number>#{3} , <alpha-value>? )")
   
-  test("@font-feature-values <family-name># {\n  <feature-value-block-list>\n}")
-  test("@media <media-query> {\n  <rule-list>\n}")
+  # test("@font-feature-values <family-name># {\n  <feature-value-block-list>\n}")
+  # test("@media <media-query> {\n  <rule-list>\n}")
 
-  test("<keyframe-selector># {\n  <declaration-list>\n}")
+  # test("<keyframe-selector># {\n  <declaration-list>\n}")
+  # test("( [ <mf-plain> | <mf-boolean> | <mf-range> ] )")
+
+  test("<ident> : <ident>")
+  test("'a' | 'b' | 'c'")
+  test("( [ <mf-plain> | <mf-boolean> | <mf-range> ] )")
   # echo "\n--------------------------\n"
   
   # let syntax2 = "<color> | <image># | <url>"

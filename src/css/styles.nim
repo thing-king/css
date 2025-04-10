@@ -50,7 +50,7 @@ macro makeStyle(stylesName: untyped): untyped =
       macro `nameEqualsIdent`*(style: var `stylesName`, value: untyped): untyped =
         # echo value.treeRepr
         if value.kind == nnkStrLit:
-          let validationResult = isValidPropertyValue(`propertyName`, value.strVal)
+          let validationResult = validatePropertyValue(`propertyName`, value.strVal)
           if validationResult.valid:
             result = nnkAsgn.newTree(
               nnkBracketExpr.newTree(
@@ -152,7 +152,7 @@ macro makeStyle(stylesName: untyped): untyped =
         )
       else:
         valueStr = valueStr.replaceUnits()
-        let validationResult = isValidPropertyValue(key.strVal, valueStr)
+        let validationResult = validatePropertyValue(key.strVal, valueStr)
         if not validationResult.valid:
           error "Invalid value for " & key.strVal & ": " & validationResult.errors.join("\n"), value
 

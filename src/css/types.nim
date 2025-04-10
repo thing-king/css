@@ -5,6 +5,7 @@ type
     message*: string
     line*: int
     column*: int
+    preview*: string
 
   ValidatorResult* = object
     valid*: bool

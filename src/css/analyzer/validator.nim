@@ -31,7 +31,7 @@ import value_parser  # provides: let tokens: seq[ValueToken] = tokenizeValue("â€
 #   temp
 
 # Debug settings
-var DEBUG {.compileTime} = true
+var DEBUG {.compileTime} = false
 proc enableDebug*() = DEBUG = true
 proc disableDebug*() = DEBUG = false
 
@@ -43,15 +43,20 @@ proc log(msg: string) =
     if DEBUG:
       echo "[LOG] " & msg
 
+var dataTypeRecursionCount {.threadvar.}: Table[string, int]
+const MAX_DATA_TYPE_RECURSION = 3
 
 # Cache for visited properties to avoid infinite recursion
 # var visitedProperties {.compileTime, threadvar.}: HashSet[string]
+
+# TODO: optimize "declaration-value" insane loop
 
 #---------------------------------------------------------
 # VALIDATORS
 #---------------------------------------------------------
 
 proc validateNode(node: Node, tokens: seq[ValueToken], index: int, visitedProperties: var HashSet[string]): MatchResult {.gcsafe.}
+proc internalValidateNode(node: Node, tokens: seq[ValueToken], index: int, visitedProperties: var HashSet[string]): MatchResult {.gcsafe.}
 
 proc isNodeOptional(node: Node): bool =
   ## Helper function to determine if a node is optional
@@ -65,6 +70,23 @@ proc hasOnlyImportant(tokens: seq[ValueToken], index: int): bool =
     return true
   return false
 
+
+var syntaxCache {.threadvar.}: Table[string, Node]
+proc initSyntaxCache() =
+  ## Initializes the syntax cache
+  syntaxCache = initTable[string, Node]()
+initSyntaxCache()
+proc getParseSyntax(syntax: string): Node =
+  ## Caches the parsed syntax tree for a given syntax string
+  if syntaxCache.hasKey(syntax):
+    return syntaxCache[syntax]
+  
+  # Parse the syntax and store it in the cache
+  let ast = parseSyntax(syntax)
+  syntaxCache[syntax] = ast
+  return ast
+
+
 proc validateDeclarationValue(tokens: seq[ValueToken], visitedProperties: var HashSet[string]): bool =
   ## Validates if tokens form a valid declaration value
   ## (matches any valid CSS property syntax)
@@ -72,7 +94,8 @@ proc validateDeclarationValue(tokens: seq[ValueToken], visitedProperties: var Ha
   
   # First try to match against all property syntaxes
   for propName, propValue in properties.pairs:
-    let syntaxAst = parseSyntax(propValue.syntax)
+    # let syntaxAst = parseSyntax(propValue.syntax)
+    let syntaxAst = getParseSyntax(propValue.syntax)
     let result = validateNode(syntaxAst, tokens, 0, visitedProperties)
     
     # Consider it valid if all tokens were consumed
@@ -88,7 +111,8 @@ proc validateDeclarationValue(tokens: seq[ValueToken], visitedProperties: var Ha
   
   # Then try to match against all custom syntaxes
   for syntaxName, syntaxValue in syntaxes.pairs:
-    let syntaxAst = parseSyntax(syntaxValue.syntax)
+    # let syntaxAst = parseSyntax(syntaxValue.syntax)
+    let syntaxAst = getParseSyntax(syntaxValue.syntax)
     let result = validateNode(syntaxAst, tokens, 0, visitedProperties)
     
     # Consider it valid if all tokens were consumed
@@ -109,8 +133,40 @@ proc validateDeclarationValue(tokens: seq[ValueToken], visitedProperties: var Ha
 
 proc validateBuiltinDataType(typeName: string, token: ValueToken, visitedProperties: var HashSet[string]): bool =
   ## Validates if a token matches a built-in data type  
-  if (typeName.len == 0 or token.value.len == 0) and typeName != "declaration-value" and token.kind != vtkString:
-    log("Empty type name or token value")
+  if typeName == "group-rule-body":
+    log("Validating group-rule-body")
+    
+    # Case 1: For a single rule token
+    if token.kind == vtkRule:
+      log("Found single rule in group-rule-body")
+      return true
+    
+    # Case 2: For a sequence of rule tokens
+    if token.kind == vtkSequence:
+      log("Checking sequence of " & $token.children.len & " tokens for group-rule-body")
+      
+      # All children must be rules
+      for child in token.children:
+        if child.kind != vtkRule:
+          log("Invalid token in group-rule-body: " & $child.kind & " (expected vtkRule)")
+          return false
+      
+      # If we got here, all children are rules
+      log("All tokens in sequence are rules, valid group-rule-body")
+      return true
+    
+    # Case 3: Neither a rule nor a sequence of rules
+    log("Token is not a rule or sequence of rules: " & $token.kind)
+    return false
+  
+  if typeName.len == 0:
+    log("Empty type name")
+    return false
+
+  if token.value.len == 0 and typeName != "declaration-value" and token.kind != vtkString:
+    echo $token
+    echo $token.kind
+    log("Empty token value")
     return false
   
   # SPECIAL CASE: var() function should match any type since it can substitute for any CSS value
@@ -207,6 +263,17 @@ proc validateBuiltinDataType(typeName: string, token: ValueToken, visitedPropert
     return token.kind == vtkDimension and token.unit in ["s", "ms"]
   of "hex-color":
     return token.kind == vtkColor and token.value.startsWith("#") and token.value.len in {4, 7, 5, 9}
+  of "charset":
+    let charsets = [
+      "UTF-8",
+      "UTF-16",
+      "ISO-8859-1",
+      "Windows-1252",
+      "Shift_JIS",
+      "EUC-JP",
+    ]
+    return token.kind == vtkString and token.value in charsets
+  
   # of "alpha-value":  
     # return token.kind == vtkNumber or token.kind == vtkPercentage
   else:
@@ -238,6 +305,23 @@ proc validateDataType(node: Node, tokens: seq[ValueToken], index: int, visitedPr
   ## Validates if tokens match a data type
   log("Validating data type: " & node.value & " at index " & $index)
   
+  # Add cycle detection for data types
+  if dataTypeRecursionCount.hasKey(node.value):
+    dataTypeRecursionCount[node.value] += 1
+    # Break recursion if we've seen this data type too many times in the call stack
+    if dataTypeRecursionCount[node.value] > MAX_DATA_TYPE_RECURSION:  # Adjust threshold as needed
+      log("Detected recursive data type: " & node.value & " - breaking recursion")
+      return MatchResult(success: true, index: index, errors: @[])
+  else:
+    dataTypeRecursionCount[node.value] = 1
+  
+  # Clean up counter when we exit this function
+  defer: 
+    if dataTypeRecursionCount[node.value] > 1:
+      dataTypeRecursionCount[node.value] -= 1
+    else:
+      dataTypeRecursionCount.del(node.value)
+
   # Check for property reference (enclosed in single quotes)
   if node.value.startsWith("'") and node.value.endsWith("'"):
     let propName = node.value[1..^2]
@@ -254,7 +338,8 @@ proc validateDataType(node: Node, tokens: seq[ValueToken], index: int, visitedPr
     
     if properties.hasKey(propName):
       let propSyntax = properties[propName].syntax
-      let propAst = parseSyntax(propSyntax)
+      # let propAst = parseSyntax(propSyntax)
+      let propAst = getParseSyntax(propSyntax)
       
       # Handle quantified property references
       if node.isQuantified:
@@ -345,7 +430,8 @@ proc validateDataType(node: Node, tokens: seq[ValueToken], index: int, visitedPr
       # Check if data type is defined in extended syntaxes
       if syntaxes.hasKey(node.value):
         let syntaxDef = syntaxes[node.value].syntax
-        let subAst = parseSyntax(syntaxDef)
+        # let subAst = parseSyntax(syntaxDef)
+        let subAst = getParseSyntax(syntaxDef)
         let res = validateNode(subAst, tokens, curIndex, visitedProperties)
         
         if res.success and res.index > curIndex:
@@ -446,8 +532,9 @@ proc validateDataType(node: Node, tokens: seq[ValueToken], index: int, visitedPr
   elif syntaxes.hasKey(node.value):
     log("Using syntax definition for: " & node.value)
     let syntaxDef = syntaxes[node.value].syntax
-    let subAst = parseSyntax(syntaxDef)
-    
+    # let subAst = parseSyntax(syntaxDef)
+    let subAst = getParseSyntax(syntaxDef)
+
     # Special handling for sequence tokens
     if index < tokens.len and tokens[index].kind == vtkSequence:
       let innerTokens = tokens[index].children
@@ -779,8 +866,9 @@ proc validateFunction(node: Node, tokens: seq[ValueToken], index: int, visitedPr
     log("Using extended function syntax: " & funcSyntax)
   
   if funcSyntax.len > 0:
-    let funcAst = parseSyntax(funcSyntax)
-    
+    # let funcAst = parseSyntax(funcSyntax)
+    let funcAst = getParseSyntax(funcSyntax)
+
     # Use the same validation logic as above
     if funcAst.kind == nkFunction:
       # Create a new MatchResult with the extended AST
@@ -794,10 +882,45 @@ proc isVarFunction(token: ValueToken): bool =
   ## Helper function to check if a token is a var() function
   return token.kind == vtkFunc and token.value == "var"
 
+import hashes
+proc hashRemainingTokens(tokens: seq[ValueToken], index: int): Hash =
+  var h: Hash = 0
+  for i in index..<tokens.len:
+    h = h !& hash(tokens[i].kind)
+    h = h !& hash(tokens[i].value)
+    # Include other relevant fields that affect matching
+    if tokens[i].kind == vtkDimension:
+      h = h !& hash(tokens[i].unit)
+  result = !$h
+
+proc hashNode(node: Node): Hash =
+  let repr = node.repr
+  var h: Hash = 0
+  h = h !& hash(repr)
+  return !$h
+
+type NodeCacheKey = tuple[nodeHash: Hash, tokensHash: Hash, tokenIndex: int]
+var validationCache {.threadvar.}: Table[NodeCacheKey, MatchResult]
+proc initValidationCache() =
+  ## Initialize the validation cache
+  validationCache = initTable[NodeCacheKey, MatchResult]()
+initValidationCache()
+
 proc validateNode(node: Node, tokens: seq[ValueToken], index: int, visitedProperties: var HashSet[string]): MatchResult {.gcsafe.} =
+  let cacheKey = (hashNode(node), hashRemainingTokens(tokens, index), index)
+  
+  # Check cache first
+  if validationCache.hasKey(cacheKey):
+    return validationCache[cacheKey]
+
+  let matchResult = internalValidateNode(node, tokens, index, visitedProperties)
+  # Store the result in the cache
+  validationCache[cacheKey] = matchResult
+  return matchResult
+
+proc internalValidateNode(node: Node, tokens: seq[ValueToken], index: int, visitedProperties: var HashSet[string]): MatchResult {.gcsafe.} =
   ## Main validator function that handles all node kinds
   log("Validating node: " & $node.kind & " '" & node.value & "' at index " & $index)
-  
 
   # Special case: For recursive calc() functions
   if index < tokens.len and tokens[index].kind == vtkFunc and tokens[index].value == "calc":
@@ -815,6 +938,60 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int, visitedProper
                       errors: @["Expected " & $node.kind & " but reached end"])
   
   case node.kind
+  of nkChar:
+    if index >= tokens.len:
+      return MatchResult(success: false, index: index,
+                        errors: @["Expected character '" & node.value & "', reached end"])
+    
+    # Special handling for var() functions - they can substitute for any character
+    if isVarFunction(tokens[index]):
+      log("var() function accepted as substitute for character: '" & node.value & "'")
+      return MatchResult(success: true, index: index + 1, errors: @[])
+    
+    # Check if the token matches the character literal
+    # Character literals in CSS syntax will be parsed as vtkIdent in our tokenizer
+    if tokens[index].kind == vtkIdent and tokens[index].value == node.value:
+      log("Matched character: '" & node.value & "'")
+      return MatchResult(success: true, index: index + 1, errors: @[])
+    
+    return MatchResult(success: false, index: index,
+                      errors: @["Expected character '" & node.value & "', got '" & tokens[index].value & "'"])
+  
+  of nkProperty:
+    if index >= tokens.len:
+      return MatchResult(success: false, index: index, 
+                        errors: @["Expected property notation, reached end"])
+    
+    # A property should have two children (name and value)
+    if node.children.len < 2:
+      return MatchResult(success: false, index: index,
+                        errors: @["Invalid property node structure"])
+    
+    log("Validating property with name and value")
+    
+    # For nkProperty, expect a vtkProperty token
+    if tokens[index].kind != vtkProperty:
+      # If the token isn't a property, check if the structure matches
+      # a property pattern (e.g., we have separate tokens for name, colon, and value)
+      if index + 2 < tokens.len:
+        # Try to match a pattern like: <name> ":" <value>
+        let nameResult = validateNode(node.children[0], tokens, index, visitedProperties)
+        
+        if nameResult.success:
+          # If the name matches, validate the value after it
+          # Assuming the colon is part of the token sequence but not explicitly checked
+          let valueResult = validateNode(node.children[1], tokens, nameResult.index + 1, visitedProperties)
+          
+          if valueResult.success:
+            return MatchResult(success: true, index: valueResult.index, errors: @[])
+      
+      return MatchResult(success: false, index: index,
+                        errors: @["Expected property, got " & $tokens[index].kind])
+    
+    # If we have a vtkProperty token, it should directly match the nkProperty node
+    # You can further validate the name and value if needed
+    return MatchResult(success: true, index: index + 1, errors: @[])
+
   of nkRule:
     if index >= tokens.len:
       return MatchResult(success: false, index: index,
@@ -835,7 +1012,7 @@ proc validateNode(node: Node, tokens: seq[ValueToken], index: int, visitedProper
     var selectorTokens: seq[ValueToken] = @[]
     if token.value.len > 0:
       # Tokenize the rule selector using the existing tokenizer
-      selectorTokens = tokenizeValue(token.value, wrapRoot=false)
+      selectorTokens = tokenizeValueFast(token.value, wrapRoot=false)
       log("Tokenized rule selector into " & $selectorTokens.len & " tokens")
     elif token.children.len > 0:
       # Use the child tokens directly
@@ -1389,8 +1566,9 @@ proc validate*(syntaxStr: string, tokens: seq[ValueToken]): ValidatorResult {.gc
   # visitedProperties = initHashSet[string]()
   
   # Parse syntax and value
-  let ast = parseSyntax(syntaxStr)
-  
+  # let ast = parseSyntax(syntaxStr)
+  let ast = getParseSyntax(syntaxStr)
+
   log "Syntax AST:"
   log ast.treeRepr
 
@@ -1468,7 +1646,7 @@ proc validate*(syntaxStr, valueStr: string): ValidatorResult {.gcsafe.} =
   ## Validates a CSS value against a syntax definition
   
   # Parse the value string into tokens
-  let tokens = tokenizeValue(valueStr)
+  let tokens = tokenizeValueFast(valueStr)
   
   # Call the main validation function
   return validate(syntaxStr, tokens)
@@ -1479,8 +1657,23 @@ proc validate*(syntaxStr, valueStr: string): ValidatorResult {.gcsafe.} =
 when isMainModule:
   enableDebug()
 
-  let syntaxStr = "@keyframes <keyframes-name> {\n  <keyframe-block-list>\n}"
-  let valueStr = "@keyframes 'sts' { from { left: 2px } }"
+#   let syntaxStr = "@media <media-query-list> {\n  <group-rule-body>\n}"
+#   let valueStr = """
+# @media (prefers-reduced-motion: no-preference) {
+#   :root {
+#     scroll-behavior: smooth;
+#   }
+# }
+# """
+  let syntaxStr = "@media <media-query-list> {\n  <group-rule-body>\n}"
+  let valueStr = """
+@media (prefers-reduced-motion: no-preference) {
+  :root {
+    scroll-behavior: smooth;
+  }
+}
+"""
+
   # let syntaxStr = "@keyframes <keyframes-name> {\n  <keyframe-block-list>\n}"
   # let valueStr = "@keyframes 'test' { from { left: 5px } to { right: 2px } }"
   # let syntaxStr = "@import [ <string> | <url> ]\n        [ layer | layer(<layer-name>) ]?\n        [ supports( [ <supports-condition> | <declaration> ] ) ]?\n        <media-query-list>? ;"

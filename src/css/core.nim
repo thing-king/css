@@ -7,12 +7,32 @@ import imports/imports
 import analyzer/validator
 import analyzer/value_parser
 
+
+# TODO: fix "declaration-value", its not efficient to check every possible syntax against the variable value
+const VALIDATE_VARIABLES = false
+
 proc validateUnitValue*(value: string): ValidatorResult {.gcsafe.} =
   let unit = value.strip(chars = {'0'..'9', '.', '+', '-'})
   return ValidatorResult(
     unit in imports.units,
     @["Invalid unit: " & value]
   )
+proc validateVariableName*(name: string): ValidatorResult {.gcsafe.} =
+  var valid = false
+  if name.startsWith("--") and not name.endsWith("-"):
+    # and if name does not have spaces- and is only a-Z and 0-9
+    valid = true
+    for c in name:
+      if not c.isAlphaNumeric and c != '-':
+        valid = false
+        break
+
+  return ValidatorResult(
+    valid,
+    @["Invalid variable name: " & name]
+  )
+proc isVariableName*(name: string): bool {.gcsafe.} =
+  return validateVariableName(name).valid
 proc validatePropertyName*(name: string): ValidatorResult {.gcsafe.} =
   return ValidatorResult(
     name in imports.properties,
@@ -74,38 +94,54 @@ proc validatePropertyValue*(name: string, tokens: seq[ValueToken]): ValidatorRes
   let property = imports.properties[name]
   return validatePropertyValue(property, tokens)
 
-# TODO
-proc validateCSS*(css: string, allowProperties: bool = false, allowRules: bool = true): ValidatorResult {.gcsafe.} =
-  var tokens = tokenizeValue(css)
+proc validateCSS*(rawTokens: seq[ValueToken], allowProperties: bool = false, allowRules: bool = true): ValidatorResult {.gcsafe.} =
+  var tokens = rawTokens
   if tokens.len == 1 and tokens[0].kind == vtkSequence:
     tokens = tokens[0].children
 
-  echo tokens.treeRepr
+  # echo tokens.treeRepr
 
   var issues: seq[Error] = @[]
 
   proc validateProperty(token: ValueToken) =
-    let name = token.value
-    let validName = validatePropertyName(name)
-    if not validName.valid:
-      issues.add(
-        Error(
-          message: "Invalid property name: " & name,
-          line: token.line,
-          column: token.column
+    let isVariable = isVariableName(token.value)
+    if not isVariable:
+      let name = token.value
+      let validName = validatePropertyName(name)
+      if not validName.valid:
+        issues.add(
+          Error(
+            message: "Invalid property name: " & name,
+            line: token.line,
+            column: token.column,
+            preview: $token
+          )
         )
-      )
-      return
-    let valid = validatePropertyValue(token.value, token.children)
-    if not valid.valid:
-      issues.add(
-        Error(
-          message: valid.errors.join(", "),
-          line: token.line,
-          column: token.column
+        return
+      let valid = validatePropertyValue(token.value, token.children)
+      if not valid.valid:
+        issues.add(
+          Error(
+            message: valid.errors.join(", "),
+            line: token.line,
+            column: token.column,
+            preview: $token
+          )
         )
-      )
-      return
+        return
+    else:
+      if VALIDATE_VARIABLES:
+        let valid = validateVariableValue(token.children)
+        if not valid.valid:
+          issues.add(
+            Error(
+              message: valid.errors.join(", "),
+              line: token.line,
+              column: token.column,
+              preview: $token
+            )
+          )
+          return
 
   proc validateAtRule(token: ValueToken) =
     let name = token.value
@@ -115,7 +151,8 @@ proc validateCSS*(css: string, allowProperties: bool = false, allowRules: bool =
         Error(
           message: "Invalid at-rule name: " & name,
           line: token.line,
-          column: token.column
+          column: token.column,
+          preview: $token
         )
       )
       return
@@ -125,7 +162,8 @@ proc validateCSS*(css: string, allowProperties: bool = false, allowRules: bool =
         Error(
           message: valid.errors.join(", "),
           line: token.line,
-          column: token.column
+          column: token.column,
+          preview: $token
         )
       )
       return
@@ -177,22 +215,32 @@ proc validateCSS*(css: string, allowProperties: bool = false, allowRules: bool =
         )
       )
       continue
-
+    
   if issues.len == 0:
     return ValidatorResult(valid: true)
   else:
     return ValidatorResult(valid: false, errors: issues)
-
+proc validateCSS*(css: string, allowProperties: bool = false, allowRules: bool = true): ValidatorResult {.gcsafe.} =
+  let tokens = tokenizeValueFast(css)
+  return validateCSS(tokens, allowProperties, allowRules)
 
 when isMainModule:
-  echo validateCSS("""
-@keyframes 'test' {
-  from {
-    color: red;
-  }
-}
+#   let content = """
+# :root,
+# [data-bs-theme=light] {
+#   --bs-blue: #0d6efd;
+# }
+# """
 
-asdasd
+  let content = readFile("./src/css/analyzer/bootstrap.css")
+  let result = validateCSS(content, allowProperties = false, allowRules = true)
+  echo $result.errors.len
 
-test: 5px
-""", allowProperties = false, allowRules = true)
+  let maxErrorPrintCount = 10
+  for i in 0 ..< min(result.errors.len, maxErrorPrintCount):
+    let error = result.errors[i]
+    echo "Error: " & error.message
+    echo "Line: " & $error.line
+    echo "Column: " & $error.column
+    echo "Preview: " & $error.preview
+    echo ""

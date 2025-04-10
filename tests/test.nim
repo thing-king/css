@@ -1,11 +1,12 @@
 import strutils, os, times
 
 import ../src/css
+import ../src/css/analyzer/value_parser
 
 import pkg/colors
 
-const ONLY_SHOW_ERRORS = true
-const MAX_ERRORS = 30
+const SHOW_ERRORS = false
+const MAX_ERRORS = 10
 
 proc testFile(path: string) =
   if not fileExists(path):
@@ -13,60 +14,52 @@ proc testFile(path: string) =
   let content = readFile(path)
 
   echo "\nTesting: " & path
-
   let startTime = getTime()
+  let tokens = tokenizeValueFast(content)
+  echo "Tokenized in: " & $(getTime() - startTime)
+
+  var count = 00
   var errorCount = 0
-  for line in content.splitLines():
-    let stripped = line.strip()
-    if not stripped.startsWith("--") and stripped.contains(":"):
-      let splits = stripped.split(":")
-      if splits.len == 2:
-        let propName = splits[0]
-        let propValue = splits[1].strip()
-        if propName.len > 2 and not propName.contains(" ") and not propValue.endsWith("{") and not propValue.endsWith(","):
-          let validation = isValidPropertyValue(propName, propValue)
-          
-          if ONLY_SHOW_ERRORS and validation.valid:
-            continue
-          echo "Testing: `" & propName & "`: `" & propValue & "`"
-          if validation.valid:
-            echo "  OK".green
-          else:
-            errorCount.inc()
-            echo "  Errors: ".red
-            for error in validation.errors:
-              if error.contains("Invalid property name"):
-                echo "    - " & error.bgRed
-              else:
-                echo "    - " & error
+  
+  let startValidateTime = getTime()
+  let validation = validateCSS(tokens, allowProperties = false, allowRules = true)
+  echo "Validated in: " & $(getTime() - startValidateTime)
+  for error in validation.errors:
+    if SHOW_ERRORS:
+      if errorCount >= MAX_ERRORS:
+        echo "\nMax errors reached.".red
+        break
+    count.inc
+    errorCount.inc()
+    if SHOW_ERRORS:
+      echo "  Errors: ".red
+      for error in validation.errors:
+        if error.message.contains("Invalid property name"):
+          echo "    - " & error.message.bgRed
+        else:
+          echo "    - " & error.message
 
-          if errorCount >= MAX_ERRORS:
-            echo "\nMax errors reached.".red
-            break
-  echo "Error Count: " & $errorCount & " / " & $MAX_ERRORS & " max"
-  if errorCount != MAX_ERRORS:
-    echo "Finished in: " & $(getTime() - startTime)
-
-proc testSingle(propertyName: string, propertyValue: string) =
-  echo "\nTesting: `" & propertyName & "`: `" & propertyValue & "`"
-  let startTime = getTime()
-  let validation = isValidPropertyValue(propertyName, propertyValue)
-  if validation.valid:
-    echo "  OK".green
-  else:
-    echo "  Errors: ".red
-    for error in validation.errors:
-      if error.contains("Invalid property name"):
-        echo "    - " & error.bgRed
-      else:
-        echo "    - " & error
-
+  echo "Total error count: " & $count
+  if SHOW_ERRORS:
+    echo "Error count: " & $errorCount & " / " & $MAX_ERRORS & " max"
+  
   echo "Finished in: " & $(getTime() - startTime)
 
 
+
 when isMainModule:
+  if paramCount() != 1:
+    echo "Usage: css <file.css>"
+    quit(1)
+  let filePath = paramStr(1)
+  if not fileExists(filePath):
+    echo "File not found: " & filePath
+    quit(1)
+  echo "Testing..."
+  testFile(filePath)
+
   # testFile("./tests/data/bootstrap.css")
-  testSingle("background-color", "rgba(1,2,3 / 0.5)")
+  # testSingle("background-color", "rgba(1,2,3 / 0.5)")
   # testFile("./tests/data/bootstrap-utilities.css")
   # testFile("./tests/data/bootstrap-reboot.css")
   # testFile("./tests/data/bootstrap-grid.css")

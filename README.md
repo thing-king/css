@@ -1,11 +1,13 @@
 # css
-MDN-typed CSS validator (**linter**) with minimally hacked non-string DSL.
+Blazing fast MDN-typed CSS validator (**linter**) with minimally hacked non-string DSL.
 
 
 ## Features
-- parses syntax and values
-- validates values against syntax
+- parses MDN syntax, parses css
+- validates parsed syntax against css
+- minimally hacked non-string dsl
 - typed styles object with assignment validation
+
 
 ### Supported
 - [X] Properties
@@ -16,6 +18,7 @@ MDN-typed CSS validator (**linter**) with minimally hacked non-string DSL.
 ### Coming soon
 - [ ] Userfriendly errors
 - [ ] Performance rewrite
+- [ ] Plugins
 - [ ] Dynamic context awareness  (i.e. track variables)
 
 ## Written DSL
@@ -80,7 +83,10 @@ test: 5px
      allowRules      = true    # allow rules
 )
 
-# (valid: false, errors: @[(message: "Invalid token kind: vtkIdent", line: 7, column: 1), (message: "Property not allowed at root level", line: 9, column: 1)])
+# (valid: false, errors: @[
+#   (message: "Invalid token kind: vtkIdent", line: 7, column: 1),
+#   (message: "Property not allowed at root level", line: 9, column: 1)
+# ])
 ```
 
 ## Styles Object
@@ -115,41 +121,46 @@ None of the alternatives matched [InvalidCSSValue]
 Error: execution of an external program failed: '/home/savant/css/bin/css'
 ```
 
+## Performance
+
+### thing-king/css
 ```
-Testing: ./tests/data/bootstrap.css
-Testing: `clip`: `rect(0, 0, 0, 0);`
-  Errors: 
-    - None of the alternatives matched
-Testing: `transform-origin`: `0 0;`
-  Errors: 
-    - Extra tokens at index 1
-Testing: `background-position`: `right 0.75rem center, center right 2.25rem;`
-  Errors: 
-    - Single item in comma list is invalid: 
-Testing: `background-position`: `right 0.75rem center, center right 2.25rem;`
-  Errors: 
-    - Single item in comma list is invalid: 
-Testing: `background`: `none;`
-  Errors: 
-    - Expected nkDataType but reached end
-Testing: `background-image`: `linear-gradient(45deg, rgba(255, 255, 255, 0.15) 25%, transparent 25%, transparent 50%, rgba(255, 255, 255, 0.15) 50%, rgba(255, 255, 255, 0.15) 75%, transparent 75%, transparent);`
-  Errors: 
-    - Single item in comma list is invalid: None of the alternatives matched
-Testing: `background`: `none;`
-  Errors: 
-    - Expected nkDataType but reached end
-Testing: `-webkit-mask-image`: `linear-gradient(130deg, #000 55%, rgba(0, 0, 0, 0.8) 75%, #000 95%);`
-  Errors: 
-    - Single item in comma list is invalid: None of the alternatives matched
-Testing: `mask-image`: `linear-gradient(130deg, #000 55%, rgba(0, 0, 0, 0.8) 75%, #000 95%);`
-  Errors: 
-    - Single item in comma list is invalid: None of the alternatives matched
-Testing: `box-shadow`: `var(--bs-focus-ring-x, 0) var(--bs-focus-ring-y, 0) var(--bs-focus-ring-blur, 0) var(--bs-focus-ring-width) var(--bs-focus-ring-color);`
-  Errors: 
-    - Extra tokens at index 1
-Testing: `clip`: `rect(0, 0, 0, 0) !important;`
-  Errors: 
-    - None of the alternatives matched
-Error Count: 11 / 30 max
-Finished in: 39 milliseconds, 736 microseconds, and 483 nanoseconds
+savant@savantpc:~/css$ time ./bin/test ./src/css/analyzer/bootstrap.css
+Testing...
+
+Testing: ./src/css/analyzer/bootstrap.css
+Tokenized in: 29 milliseconds, 881 microseconds, and 80 nanoseconds
+Validated in: 45 milliseconds, 965 microseconds, and 70 nanoseconds
+Total error count: 24
+Finished in: 75 milliseconds, 897 microseconds, and 720 nanoseconds
+
+real    0m0.078s
+user    0m0.076s
+sys     0m0.011s
+```
+
+### csstree-validator
+```
+savant@savantpc:~/css/tests/data$ time csstree-validator bootstrap.css
+# bootstrap.css
+    * Invalid value for `text-align` property
+      syntax: start | end | left | right | center | justify | match-parent
+       value: -webkit-match-parent
+      --------^
+    * Unknown property `-webkit-margin-end`
+    * Unknown property `-webkit-margin-end`
+    * Unknown property `-webkit-margin-end`
+    * Unknown property `-webkit-margin-end`
+    * Unknown property `-webkit-margin-end`
+    * Unknown property `-webkit-margin-end`
+    * Unknown property `color-adjust`
+    * Invalid value for `-moz-user-select` property
+      syntax: none | text | all | -moz-none
+       value: auto
+      --------^
+
+
+real    0m0.365s
+user    0m0.593s
+sys     0m0.136s
 ```

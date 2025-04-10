@@ -85,7 +85,7 @@ proc parseWrittenPropertyBody(syntax: string, body: NimNode): WrittenPropertyBod
     # echo valueStr
     var validateResponse = ValidatorResult(valid: true, errors: @[])
     if syntax != "<declaration-value>":
-      validateResponse = isValidSyntaxValue(syntax, valueStr)
+      validateResponse = validateSyntaxValue(syntax, valueStr)
     let valid  = validateResponse.valid
     let errors = validateResponse.errors
     if not valid:
@@ -153,7 +153,7 @@ proc parseWrittenProperty(node: NimNode): WrittenProperty =
 
   var syntax: string = "<declaration-value>"
   if not isVariable:
-    if not isValidPropertyName(cssPropertyName).valid:
+    if not validatePropertyName(cssPropertyName).valid:
       error "Unknown CSS property name: " & cssPropertyName, node[0]
     syntax = getProperty(cssPropertyName).syntax
 

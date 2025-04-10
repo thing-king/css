@@ -22,7 +22,9 @@ type
     tkAtRule,       # @keyword - CSS at-rule
     tkBodyBlock,    # {...} - block of content
     tkOpenBrace,    # { - opening brace
-    tkCloseBrace    # } - closing brace
+    tkCloseBrace,   # } - closing brace
+    tkColon,        # : - colon separator
+    tkChar          # 's' - character in single quotes
 
   ValueRangeType* = object
     min*: string
@@ -71,7 +73,6 @@ proc parseDataType(input: string, pos: var int): string {.gcsafe.} =
         # Skip any value range that might appear after the property
         if input[pos] == '[':
           # We're inside a data type but encountered a value range marker
-          # We need to roll back position to process it separately
           # Don't add it to the result
           break
         result.add(input[pos])
@@ -100,6 +101,25 @@ proc parseDataType(input: string, pos: var int): string {.gcsafe.} =
     pos += 1 # Skip closing >
   else:
     # Invalid data type, no closing >
+    return ""
+
+proc parseChar(input: string, pos: var int): string {.gcsafe.} =
+  # Parse a character in single quotes like 's'
+  result = ""
+  if pos >= input.len or input[pos] != '\'':
+    return
+  
+  pos += 1 # Skip opening quote
+  
+  # Capture everything until the closing quote
+  while pos < input.len and input[pos] != '\'':
+    result.add(input[pos])
+    pos += 1
+  
+  if pos < input.len and input[pos] == '\'':
+    pos += 1 # Skip closing quote
+  else:
+    # Invalid char, no closing quote
     return ""
 
 proc parseKeyword(input: string, pos: var int): string {.gcsafe.} =
@@ -321,6 +341,12 @@ proc parseTokens(input: string, pos: var int, inFunctionGroup = false): seq[Toke
       tokens.add(Token(kind: tkComma, value: ",", isSpecial: false))
       continue
     
+    # Handle colon as a token
+    if input[pos] == ':':
+      pos += 1 # Skip the colon
+      tokens.add(Token(kind: tkColon, value: ":", isSpecial: false))
+      continue
+    
     # Handle @ for at-rules
     if input[pos] == '@':
       pos += 1 # Skip @
@@ -347,6 +373,41 @@ proc parseTokens(input: string, pos: var int, inFunctionGroup = false): seq[Toke
     # Handle closing brace - should be handled by parseBodyBlock
     if input[pos] == '}':
       pos += 1 # Skip }
+      continue
+    
+    # Handle character in single quotes
+    if input[pos] == '\'':
+      let charValue = parseChar(input, pos)
+      if charValue != "":
+        # Check for modifiers and quantity
+        skipWhitespace(input, pos)
+        let modResult = checkModifiersWithQuantity(input, pos)
+        
+        # Then check for quantity if not already found after a modifier
+        let quantityOpt = if modResult.quantity.isNone and pos < input.len and input[pos] == '{':
+          parseQuantity(input, pos)
+        else:
+          modResult.quantity
+        
+        # Create appropriate token based on quantity
+        if quantityOpt.isSome:
+          var token = Token(
+            kind: tkChar, 
+            value: charValue, 
+            isSpecial: true,
+            quantity: quantityOpt.get(),
+            valueRange: ValueRangeType(), # Empty, as chars don't have value ranges
+            modifiers: modResult.modifiers
+          )
+          tokens.add(token)
+        else:
+          var token = Token(
+            kind: tkChar, 
+            value: charValue, 
+            isSpecial: false,
+            modifiers: modResult.modifiers
+          )
+          tokens.add(token)
       continue
     
     # Data Type
@@ -596,11 +657,16 @@ proc `$`(token: Token): string =
       base = "OpenBrace({)"
     of tkCloseBrace:
       base = "CloseBrace(})"
+    of tkColon:
+      base = "Colon(:)"
+    of tkChar:
+      base = "Char('" & token.value & "')"
   
   # Add special information if any
   if token.isSpecial:
     if token.kind == tkDataType or token.kind == tkKeyword or 
-       token.kind == tkParenGroup or token.kind == tkGroup or token.kind == tkOptional:
+       token.kind == tkParenGroup or token.kind == tkGroup or token.kind == tkOptional or
+       token.kind == tkChar:  # Add tkChar to the list of tokens that can have specials
       # Show quantity if available
       if token.quantity.min != 0 or token.quantity.max.isSome:
         base = base & " " & formatQuantity(token.quantity)
@@ -632,16 +698,27 @@ proc `$`(token: Token): string =
   else:
     result = base
 
+import times
 when isMainModule:
   # Test the enhanced CSS syntax parser
+  
+  let startTime = getTime()
   block:
     let syntax1 = "@font-feature-values <family-name># {\n  <feature-value-block-list>\n}"
     let tokens1 = tokenizeSyntax(syntax1)
     echo "Parsed syntax: ", syntax1
     echo tokens1
     
-    # Test with more complex at-rule syntax
-    let syntax2 = "@starting-style {\n  <declaration-list> | <group-rule-body>\n}"
+    # Test with more complex at-rule syntax that includes a colon
+    let syntax2 = "( <ident> : <ident> )"
     let tokens2 = tokenizeSyntax(syntax2)
     echo "\nParsed syntax: ", syntax2
     echo tokens2
+
+    # Test with character literals
+    let syntax3 = "( [ <mf-plain> | <mf-boolean> | <mf-range> ] )"
+    let tokens3 = tokenizeSyntax(syntax3)
+    echo "\nParsed syntax: ", syntax3
+    echo tokens3
+  
+  echo "\nTotal time taken: ", getTime() - startTime
